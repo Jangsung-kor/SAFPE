@@ -7,6 +7,7 @@
           <h2 class="toolbar-title">
             프로젝트 관리
           </h2>
+
           <el-divider />
 
           <el-button @click="handleCreateProject" :icon="FolderAdd">
@@ -22,6 +23,7 @@
             </el-button>
           </div>
 
+          <!-- 프로젝트 관리 부분 -->
           <h3 class="tool-group-title">
             그리기 도구
           </h3>
@@ -31,13 +33,13 @@
               벽 그리기
             </el-button>
           </el-tooltip>
-          <el-tooltip content="캔버스 위를 클릭하여 문을 추가합니다." placement="right">
+          <el-tooltip content="벽 위를 클릭하여 문을 추가합니다." placement="right">
             <el-button class="tool-button" :class="{ 'is-active': activeTool === 'door' }" :icon="SwitchButton"
               @click="selectTool('door')">
               문 추가
             </el-button>
           </el-tooltip>
-          <el-tooltip content="캔버스 위를 클릭하여 창문을 추가합니다." placement="right">
+          <el-tooltip content="벽 위를 클릭하여 창문을 추가합니다." placement="right">
             <el-button class="tool-button" :class="{ 'is-active': activeTool === 'window' }" :icon="FullScreen"
               @click="selectTool('window')">
               창문 추가 (구현 예정)
@@ -45,15 +47,36 @@
           </el-tooltip>
 
           <el-divider />
+
+          <el-tooltip content="요소를 클릭하여 삭제합니다." placement="right">
+            <el-button class="tool-button" :class="{ 'is-active': activeTool === 'delete' }" :icon="Delete"
+              @click="selectTool('delete')">
+              삭제
+            </el-button>
+          </el-tooltip>
+
+          <el-divider />
+
+          <div v-if="currentProject?.metrics">
+            <h3 class="tool-group-title">
+              정보
+            </h3>
+            <div class="metrics-info">
+              <span>
+                총 벽 길이: {{ currentProject.metrics.totalWallLength }} px
+              </span>
+              <span>
+                예상 면적: {{ currentProject.metrics.estimatedArea }} px<sup>2</sup>
+              </span>
+            </div>
+          </div>
+
           <h3 class="tool-group-title">
             데이터 확인
           </h3>
           <div class="data-viewer">
             <pre>
               {{ walls }}
-            </pre>
-            <pre>
-              {{ doors }}
             </pre>
           </div>
 
@@ -84,7 +107,7 @@
         <!-- 중앙 캔버스 영억 (Main) -->
         <el-main>
           <div class="canvas-wrapper" ref="canvasWrapper" @mousedown="handleMouseDown" @mousemove="handleMouseMove"
-            @mouseup="handleMouseUp" @mouseleave="handleMouseUp">
+            @mouseup="handleMouseUp" @mouseleave="handleMouseUp" @click="handleClick">
             <!-- 배경 이미지가 없을 때 안내 메세지 -->
             <el-empty v-if="!backgroundImage" description="왼쪽 메뉴에서 배경 이미지를 업로드해주세요." />
 
@@ -105,7 +128,7 @@
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, EditPen, SwitchButton, FullScreen, FolderChecked, FolderAdd } from '@element-plus/icons-vue';
+import { Upload, EditPen, SwitchButton, FullScreen, FolderChecked, FolderAdd, Delete } from '@element-plus/icons-vue';
 import * as api from '@/api/api';
 
 // DOM 요소를 참조하기 위한 ref
@@ -115,8 +138,9 @@ const drawingCanvas = ref(null);
 
 // 상태 관리
 const currentProject = ref(null);;  // 현재 작업중인 프로젝트 전체 데이터를 저장
-const walls = ref([]);  // 벽 데이터 (currentProject.planData.walls)
-const doors = ref([]);  // 문 데이터 (currentProject.planData.doors)
+const walls = ref([]);  // 벽 데이터
+const doors = ref([]);  // 문 데이터
+const windows = ref([]);  // 창문 데이터
 
 const backgroundImage = ref(null);
 const activeTool = ref(null); // 'wall', 'door', 'window' 등.
@@ -136,15 +160,6 @@ const toolNameMap = {
   wall: '벽 그리기',
   door: '문 추가',
   window: '창문 추가',
-}
-
-// 도구 선택
-const selectTool = (tool) => {
-  if (activeTool.value === tool) {
-    activeTool.value = null;  // 같은 버튼을 다시 누르면 선택 해제
-  } else {
-    activeTool.value = tool;
-  }
 }
 
 // '업로드' 버튼 클릭 시 숨겨진 input 클릭
@@ -222,7 +237,11 @@ async function loadProject(projectId) {
     currentProject.value = response.data;
 
     // 데이터 초기화
-    walls.value = currentProject.value.planData?.walls || [];
+    const planData = currentProject.value.planData || [];
+    walls.value = planData.walls || [];
+    doors.value = planData.doors || [];
+    windows.value = planData.windows || [];
+
     backgroundImage.value = currentProject.value.backgroundImageUrl
       ? `http://localhost:8080${currentProject.value.backgroundImageUrl}` // 전체 URL로 만들어줌
       : null;
@@ -235,6 +254,31 @@ async function loadProject(projectId) {
     // 에러 메세지는 언터셉처가 처리
   }
 }
+
+// 프로젝트 저장
+async function handleSaveProject() {
+  if (!currentProject.value) return;
+
+  try {
+    const projectData = {
+      title: currentProject.value.title,
+      planData: {
+        walls: walls.value,
+        doors: doors.value,
+        windows: windows.value,
+      }
+    };
+
+    // 저장 후, 서버로부터 계산된 metrics 데이터를 다시 받아와 갱신
+    const response = await api.updateProject(currentProject.value.id, projectData);
+    currentProject.value = response.data;
+
+    ElMessage.success('프로젝트가 성공적으로 저장되었습니다.');
+  } catch (error) {
+    console.error("프로젝트 저장 실해:", error);
+  }
+}
+
 /**
  * 새 프로젝트 생성
  */
@@ -271,31 +315,32 @@ const redrawCanvas = () => {
   const canvas = drawingCanvas.value;
   ctx.value.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 1. 완성된 벽 그리기
+  // 1. 벽 그리기
   ctx.value.strokeStyle = '#5865f2';  // 완성된 벽 색상 (Primary Color)
-  ctx.value.lineWidth = 4;
+  ctx.value.lineWidth = 5;
   ctx.value.lineCap = 'round';
+  walls.value.forEach(wall => {
+    ctx.value.beginPath();
+    ctx.value.moveTo(wall.start.x, wall.start.y);
+    ctx.value.lineTo(wall.end.x, wall.end.y);
+    ctx.value.stroke();
+  });
 
-  if (activeTool.value === 'wall') {
-    walls.value.forEach(wall => {
-      ctx.value.beginPath();
-      ctx.value.moveTo(wall.start.x, wall.start.y);
-      ctx.value.lineTo(wall.end.x, wall.end.y);
-      ctx.value.stroke();
-    });
-  }
+  // 2. 문 그리기
+  ctx.value.fillStyle = '#f2a358';  // 문 색상
+  doors.value.forEach(door => {
+    // 문은 간단히 사각형으로 표현
+    ctx.value.fillRect(door.position.x - door.width / 2, door.position.y - 10, door.width, 20);
+  });
 
-  if (activeTool.value === 'door') {
-    doors.value.forEach(door => {
-      ctx.value.beginPath();
-      ctx.value.moveTo(door.start.x, door.start.y);
-      ctx.value.lineTo(door.end.x, door.end.y);
-      ctx.value.stroke();
-    });
-  }
+  // 3. 창문 그리기
+  ctx.value.fillStyle = '#58c9f2';  // 창문 색상
+  windows.value.forEach(window => {
+    ctx.value.fillRect(window.position.x - window.width / 2, window.position.y - 5, window.width, 10);
+  })
 
-  // 2. 현재 그리고 있는 선(미리보기) 그리기
-  if (isDrawing.value && (activeTool.value === 'wall' || activeTool.value === 'door')) {
+  // 4. 현재 그리고 중인 벽 미리모기
+  if (isDrawing.value && (activeTool.value === 'wall')) {
     ctx.value.strokeStyle = '#e2e2e2';  // 그리는 중인 선 색상 (Text Color)
     ctx.value.lineWidth = 2;
     ctx.value.setLineDash([5, 5]);  // 점선으로 표시
@@ -309,15 +354,20 @@ const redrawCanvas = () => {
   }
 }
 
+// 도구 선택
+function selectTool(tool) {
+  // 같은 버튼을 다시 누르면 선택 해제
+  activeTool.value = (activeTool.value === tool) ? null : tool;
+}
+
 // -- 마우스 동작 함수
 /**
- * 마우스 버튼 눌렀을 때
+ * mousedown, mousemove, mouseup은 '벽' 그리기 전용으로 사용
  */
+// 마우스 버튼 눌렀을 때
 const handleMouseDown = (event) => {
-  if (activeTool.value === 'window') {
-    if (activeTool.value) ElMessage.info('현재 이 도구는 구현 예정입니다.');
-    return;
-  }
+  if (activeTool.value !== 'wall') return;
+
   isDrawing.value = true;
   startPoint.value = {
     x: event.offsetX,
@@ -348,9 +398,10 @@ const handleMouseMove = (event) => {
  * 마우스 버튼 뗐을 때 (또는 캔버스 밖으로 나갔을 때)
  */
 const handleMouseUp = () => {
-  if (!isDrawing.value) return;
-
-  isDrawing.value = false;
+  if (!isDrawing.value || activeTool.value !== 'wall') {
+    isDrawing.value = false;
+    return;
+  }
 
   // 시작점과 끝점이 거의 같으면 그리지 않음 (단순 클릭 방지)
   const distance = Math.sqrt(
@@ -360,43 +411,83 @@ const handleMouseUp = () => {
   if (distance < 5) return;
 
   // 완성된 벽을 데이터 배열에 추가
-  if (activeTool.value === 'wall') {
-    const newWall = {
-      start: { ...startPoint.value },
-      end: { ...currentPoint.value },
-    };
-    walls.value.push(newWall);
-  }
-
-  // 완성된 문을 데이터 배열에 추가
-  if (activeTool.value === 'door') {
-    const newDoor = {
-      start: { ...startPoint.value },
-      end: { ...currentPoint.value },
-    };
-    doors.value.push(newDoor);
-  }
+  const newWall = {
+    start: { ...startPoint.value },
+    end: { ...currentPoint.value },
+  };
+  walls.value.push(newWall);
 
   // 최종적으로 캔버스를 다시 그려서 안성된 벽을 표시
   redrawCanvas();
+  isDrawing.value = false;
 }
 
-// 프로젝트 저장
-async function handleSaveProject() {
-  if (!currentProject.value) return;
+// 클릭 이벤트는 '문', '창문' 추가와 '삭제'에 사용
+const handleClick = (event) => {
+  const clickPos = {
+    x: event.offsetX,
+    y: event.offsetY,
+  };
 
-  try {
-    const projectData = {
-      title: currentProject.value.title,
-      planData: {
-        walls: walls.value,
-        // doors, windows 데이터도 추가
-      }
-    };
-    await api.updateProject(currentProject.value.id, projectData);
-    ElMessage.success('프로젝트가 성공적으로 저장되었습니다.');
-  } catch (error) {
-    console.error("프로젝트 저장 실해:", error);
+  if (activeTool.value === 'door') {
+    doors.value.push({
+      id: `door-${Date.now()}`, // 삭제를 위한 임시 ID
+      position: clickPos,
+      width: 80,
+    });
+  } else if (activeTool.value === 'window') {
+    windows.value.push({
+      id: `windows-${Date.now()}`,
+      position: clickPos,
+      width: 120,
+    });
+  } else if (activeTool.value === 'delete') {
+    deleteElementAt(clickPos);
+  }
+
+  redrawCanvas();
+}
+
+// 삭제 로직
+function deleteElementAt(pos) {
+  const tolerance = 15; // 클릭 허용 오차 범위
+
+  // 1. 문 삭제 확인
+  let foundIndex = doors.value.findIndex(door =>
+    Math.abs(pos.x - door.position.x) < door.width / 2 &&
+    Math.abs(pos.y - door.position.y) < tolerance
+  );
+  if (foundIndex > -1) {
+    doors.value.splice(foundIndex, 1);
+    return;
+  }
+
+  // 2. 창문 삭제 확인
+  foundIndex = windows.value.findIndex(window =>
+    Math.abs(pos.x - window.position.x) < window.width / 2 &&
+    Math.abs(pos.y - window.position.y) < tolerance
+  );
+  if (foundIndex > -1) {
+    windows.value.splice(foundIndex, 1);
+    return;
+  }
+
+  // 3. 벽 삭제 확인 (점과 선 사이의 거리 계산)
+  foundIndex = walls.value.findIndex(wall => {
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+    const lengthSq = dx * dx + dy * dy;
+    if (lengthSq === 0) return false;
+    let t = ((pos.x - wall.start.x) * dx + (pos.y - wall.start.y) * dy) / lengthSq;
+    t = Math.max(0, Math.min(1, t));
+    const closestX = wall.start.x + t * dx;
+    const closestY = wall.start.y + t * dy;
+    const distSq = Math.pow(pos.x - closestX, 2) + Math.pow(pos.y - closestY, 2);
+    return distSq < tolerance * tolerance;
+  });
+
+  if (foundIndex > -1) {
+    walls.value.splice(foundIndex, 1);
   }
 }
 
@@ -522,5 +613,16 @@ async function handleSaveProject() {
   white-space: pre-wrap;
   word-break: break-all;
   color: #c0c0c0;
+}
+
+.metrics-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #c0c0c0;
+  padding: 10px;
+  background-color: var(--bg-color);
+  border-radius: 4px;
 }
 </style>
