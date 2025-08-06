@@ -42,7 +42,7 @@
           <el-tooltip content="벽 위를 클릭하여 창문을 추가합니다." placement="right">
             <el-button class="tool-button" :class="{ 'is-active': activeTool === 'window' }" :icon="FullScreen"
               @click="selectTool('window')">
-              창문 추가 (구현 예정)
+              창문 추가
             </el-button>
           </el-tooltip>
 
@@ -81,7 +81,16 @@
           </div>
 
           <div class="toolbar-footer">
-            <el-button type="success" :icon="FolderChecked" @click="handleSaveProject" :disabled="!currentProject">
+            <el-button-group>
+              <el-button type="primary" :icon="Download" @click="handleExport('png')">
+                PNG
+              </el-button>
+              <el-button type="primary" :icon="Download" @click="handleExport('pdf')">
+                PDF
+              </el-button>
+            </el-button-group>
+            <el-button style="margin-left: 10px;" type="success" :icon="FolderChecked" @click="handleSaveProject"
+              :disabled="!currentProject">
               프로젝트 저장
             </el-button>
           </div>
@@ -128,7 +137,7 @@
 <script setup>
 import { ref, nextTick, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, EditPen, SwitchButton, FullScreen, FolderChecked, FolderAdd, Delete } from '@element-plus/icons-vue';
+import { Upload, EditPen, SwitchButton, FullScreen, FolderChecked, FolderAdd, Delete, Download } from '@element-plus/icons-vue';
 import * as api from '@/api/api';
 
 // DOM 요소를 참조하기 위한 ref
@@ -175,6 +184,8 @@ const handleFileChange = async (event) => {
   }
 
   const file = event.target.files[0];
+  console.log(currentProject.value);
+  console.log(currentProject.value.id);
   if (file) {
     try {
       const response = await api.uploadBackgroundImage(currentProject.value.id, file);
@@ -488,6 +499,29 @@ function deleteElementAt(pos) {
 
   if (foundIndex > -1) {
     walls.value.splice(foundIndex, 1);
+  }
+}
+
+async function handleExport(format) {
+  if (!currentProject.value) {
+    ElMessage.warning('먼저 프로젝트를 저장해주세요.');
+    return;
+  }
+
+  try {
+    const response = await api.exportProjectFile(currentProject.value.id, format);
+
+    // blob 데이터르르 이용해 다운르도 링크를 생성하고 클릭
+    const url = window.URL.createObjectURL(new Blob([response.data]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `floorplan-${currentProject.value.id}.${format}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url); // 메모리 해제
+  } catch (error) {
+    console.error(`파일(${format}) 내보내기 실패:`, error);
   }
 }
 

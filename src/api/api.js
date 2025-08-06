@@ -58,3 +58,11 @@ export const uploadBackgroundImage = (projectId, file) => {
     },
   })
 }
+
+// 프로젝트 파일(png, pdf) 다운로드
+// 파일 다운로드는 응답 타입이 blob
+export const exportProjectFile = (projectId, format = 'png') => {
+  return apiClient.get(`/projects/${projectId}/export?format=${format}`, {
+    responseType: 'blob',
+  })
+}

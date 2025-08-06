@@ -1,4 +1,5 @@
 /* src/assets/styles/global.css */
+@import './custom.css';
 
 /* :root에 색상 변수 정의 */
 :root {
