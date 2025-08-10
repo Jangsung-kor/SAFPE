@@ -257,7 +257,11 @@ function setupCanvasListeners() {
   const canvas = fabricCanvas.value;
 
   // 객체가 수정되었을때
-  canvas.on('object:modified', () => {
+  canvas.on('object:modified', (e) => {
+    // 그룹 자체를 수정할 때 내부 객체들의 정보 업데이트
+    if (e.target.type === 'group') {
+      updateDimensionText(e.target);
+    }
     updateSelectedInfo();
     saveState();
   })
@@ -267,20 +271,22 @@ function setupCanvasListeners() {
   canvas.on('selection:cleared', () => { selectedObjectInfo.value = null; });
 
   // 벽 그리기 로직 (마우스 down, move, up)
-  let line, isDown;
+  let line, isDown, startPoint;
   canvas.on('mouse:down', (o) => {
     if (activeTool.value !== 'wall') return;
-    console.log('마우스 누름 이벤트');
     isDown = true;
-    const pointer = canvas.getPointer(o.e);
-    const points = [pointer.x, pointer.y, pointer.x, pointer.y];
+    startPoint = canvas.getPointer(o.e);
+    const points = [startPoint.x, startPoint.y, startPoint.x, startPoint.y];
     line = new fabric.Line(points, {
       stroke: '#5865f2',
       strokeWidth: 5,
-      selectable: true,
-      type: 'wall',
+      selectable: false,
+      originX: 'center',
+      originY: 'center',
+      type: 'wall-line',
       id: `wall-${Date.now()}`
     });
+    // 그리는 동안에는 아직 그룹화 X
     canvas.add(line);
   });
   canvas.on('mouse:move', (o) => {
@@ -292,9 +298,30 @@ function setupCanvasListeners() {
     })
     canvas.renderAll();
   })
-  canvas.on('mouse:up', () => {
-    if (activeTool.value !== 'wall') return;
+  canvas.on('mouse:up', (o) => {
+    if (activeTool.value !== 'wall' || !isDown) return;
     isDown = false;
+
+    // 짧은 클릭은 무시
+    const endPoint = canvas.getPointer(o.e);
+    const length = Math.sqrt(Math.pow(endPoint.x - startPoint.x, 2) + Math.pow(endPoint.y - startPoint.y, 2));
+    if (length < 5) {
+      canvas.remove(line);
+      return;
+    }
+
+    // 그리기가 끝나면, 벽과 치수를 그룹으로 묶는다.
+    const text = new fabric.Text(Math.round(length) + ' px', {
+      fontSize: 16,
+      fill: '#e2e2e2',
+      originX: 'center',
+      originY: 'bottom', // 텍스트를 벽 위쪽에 배치
+      top: -10, // 벽과의 간격
+    })
+
+    const group = new fabric.Group([line, text], {
+
+    })
     saveState();
   })
 
