@@ -23,6 +23,25 @@
             </el-button>
           </div>
 
+          <h3 class="tool-group-title">
+            편집 도구
+          </h3>
+          <el-button-group>
+            <el-tooltip content="선택과 수정" placement="top">
+              <el-button :type="activeTool === 'select' ? 'primary' : ''" :icon="Pointer"
+                @click="selectTool('select')" />
+            </el-tooltip>
+            <el-tooltip content="실행 취소 (Ctrl+Z)" placement="top">
+              <el-button :icon="RefreshLeft" :disabled="!canUndo" @click="undo" />
+            </el-tooltip>
+            <el-tooltip content="다시 실행 (Ctrl+Y)" placement="top">
+              <el-button :icon="RefreshRight" :disabled="!canRedo" @click="redo" />
+            </el-tooltip>
+            <el-tooltip content="삭제 (Delete)" placement="top">
+              <el-button :icon="Delete" @click="deleteSelected" />
+            </el-tooltip>
+          </el-button-group>
+
           <!-- 프로젝트 관리 부분 -->
           <h3 class="tool-group-title">
             그리기 도구
@@ -47,15 +66,26 @@
           </el-tooltip>
 
           <el-divider />
-
-          <el-tooltip content="요소를 클릭하여 삭제합니다." placement="right">
-            <el-button class="tool-button" :class="{ 'is-active': activeTool === 'delete' }" :icon="Delete"
-              @click="selectTool('delete')">
-              삭제
-            </el-button>
-          </el-tooltip>
-
-          <el-divider />
+          <!-- 선택된 객체 정보 표시 -->
+          <div v-if="selectedObjectInfo">
+            <h3 class="tool-group-title">
+              선택된 요소 정보
+            </h3>
+            <div class="metrics-info">
+              <span>
+                타입: {{ selectedObjectInfo.type }}
+              </span>
+              <span>
+                너비: {{ selectedObjectInfo.width }} px
+              </span>
+              <span v-if="selectedObjectInfo.height">
+                높이: {{ selectedObjectInfo.height }} px
+              </span>
+              <span v-if="selectedObjectInfo.angle">
+                각도: {{ selectedObjectInfo.angle }} °
+              </span>
+            </div>
+          </div>
 
           <div v-if="currentProject?.metrics">
             <h3 class="tool-group-title">
@@ -115,18 +145,8 @@
 
         <!-- 중앙 캔버스 영억 (Main) -->
         <el-main>
-          <div class="canvas-wrapper" ref="canvasWrapper" @mousedown="handleMouseDown" @mousemove="handleMouseMove"
-            @mouseup="handleMouseUp" @mouseleave="handleMouseUp" @click="handleClick">
-            <!-- 배경 이미지가 없을 때 안내 메세지 -->
-            <el-empty v-if="!backgroundImage" description="왼쪽 메뉴에서 배경 이미지를 업로드해주세요." />
-
-            <!-- 배경 이미지가 있을 때 -->
-            <template v-else>
-              <img class="background-image" :src="backgroundImage" alt="배경 이미지" />
-              <!-- 이 canvas 위에 평면도 그림 -->
-              <canvas class="drawing-canvas" ref="drawingCanvas"
-                :class="{ 'drawing-mode': (activeTool === 'wall' || activeTool === 'door') }"></canvas>
-            </template>
+          <div class="canvas-wrapper" ref="canvasWrapper">
+            <canvas id="floorplan-canvas"></canvas>
           </div>
         </el-main>
       </el-container>
@@ -135,34 +155,46 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted } from 'vue'
+import { fabric } from 'fabric'
+import { ref, nextTick, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Upload, EditPen, SwitchButton, FullScreen, FolderChecked, FolderAdd, Delete, Download } from '@element-plus/icons-vue';
+import {
+  Upload,
+  EditPen,
+  SwitchButton,
+  FullScreen,
+  FolderChecked,
+  FolderAdd,
+  Delete,
+  Download,
+  Pointer,
+  RefreshLeft,
+  RefreshRight,
+} from '@element-plus/icons-vue';
 import * as api from '@/api/api';
 
 // DOM 요소를 참조하기 위한 ref
 const fileInput = ref(null);
 const canvasWrapper = ref(null);
-const drawingCanvas = ref(null);
 
 // 상태 관리
 const currentProject = ref(null);;  // 현재 작업중인 프로젝트 전체 데이터를 저장
 const walls = ref([]);  // 벽 데이터
 const doors = ref([]);  // 문 데이터
 const windows = ref([]);  // 창문 데이터
-
 const backgroundImage = ref(null);
-const activeTool = ref(null); // 'wall', 'door', 'window' 등.
-const isDrawing = ref(false);
-const startPoint = ref({
-  x: 0,
-  y: 0,
-})
-const currentPoint = ref({
-  x: 0,
-  y: 0,
-})
-const ctx = ref(null);  // 캔버스 2D 컨텍스트
+const activeTool = ref('select'); // 'wall', 'door', 'window' 등.
+const fabricCanvas = ref(null);
+
+// Undo/Redo 상태
+const history = ref([]);
+const historyIndex = ref(-1);
+const isActionFromHistory = ref(false); // Undo,Redo 실행 중인지 여부
+const canUndo = computed(() => historyIndex.value > 0);
+const canRedo = computed(() => historyIndex.value < history.value.length - 1);
+
+// 선택된 객체 정보
+const selectedObjectInfo = ref(null);
 
 // UI 텍스트 매핑
 const toolNameMap = {
@@ -184,63 +216,258 @@ const handleFileChange = async (event) => {
   }
 
   const file = event.target.files[0];
-  console.log(currentProject.value);
-  console.log(currentProject.value.id);
   if (file) {
     try {
       const response = await api.uploadBackgroundImage(currentProject.value.id, file);
       // 서버 응답으로 받은 URL로 배경 설정
       currentProject.value.backgroundImageUrl = response.data.backgroundImageUrl;
       backgroundImage.value = `http://localhost:8080${response.data.backgroundImageUrl}`;
+      fabricCanvas.value.setBackgroundImage(
+        backgroundImage.value,
+        fabricCanvas.value.renderAll.bind(fabricCanvas.value)
+      )
 
       await nextTick();
-      initializeCanvas();
     } catch (error) {
       console.error('이미지 업로드 실패:', error);
     }
 
     // 선택된 이미지 파일을 URL로 변환하여 화면에 표시
     backgroundImage.value = URL.createObjectURL(file);
-
-    // 이미지가 로두된 후 캔버스 크기 조절
-    nextTick(() => {
-      initializeCanvas();
-    })
-  }
-}
-
-// 캔버스 초기화와 리사이즈
-const initializeCanvas = () => {
-  if (drawingCanvas.value && canvasWrapper.value) {
-    ctx.value = drawingCanvas.value.getContext('2d');
-    resizeCanvas();
-  }
-}
-
-// 캔버스 크기로 부모 요소(wrapper)에 맞게 조절하는 함수
-const resizeCanvas = () => {
-  if (ctx.value && canvasWrapper.value) {
-    const wrapperRect = canvasWrapper.value.getBoundingClientRect();
-    drawingCanvas.value.width = wrapperRect.width;
-    drawingCanvas.value.height = wrapperRect.height;
-
-    // 리사이즈 후, 기존에 그린 내용 다시 그리기
-    redrawCanvas();
   }
 }
 
 // 컴포넌트가 마운트되면 resizeObserver를 설정하여 창 크기 변경 감지
 onMounted(() => {
-  // 페이지 로드 시, 마지막 프로젝트 또는 특정 프로젝트 로드
-  // 실제 앱에서는 라우터 파라미터에서 ID를 가져온다.
-  // 만약 1번 프로젝트가 없다면, 오류 메세지 표시.
-  // await loadProject(1)
+  const canvasEl = document.getElementById('floorplan-canvas');
+  const wrapperEl = canvasEl.parentElement;
 
-  if (canvasWrapper.value) {
-    const observer = new ResizeObserver(resizeCanvas);
-    observer.observe(canvasWrapper.value);
-  }
+  const canvas = new fabric.Canvas(canvasEl, {
+    width: wrapperEl.offsetWidth,
+    height: wrapperEl.offsetHeight,
+    backgroundColor: '#23272a',
+    selection: true,
+  })
+  fabricCanvas.value = canvas;
+
+  setupCanvasListeners();
 })
+
+function setupCanvasListeners() {
+  const canvas = fabricCanvas.value;
+
+  // 객체가 수정되었을때
+  canvas.on('object:modified', () => {
+    updateSelectedInfo();
+    saveState();
+  })
+
+  canvas.on('selection:created', updateSelectedInfo);
+  canvas.on('selection:updated', updateSelectedInfo);
+  canvas.on('selection:cleared', () => { selectedObjectInfo.value = null; });
+
+  // 벽 그리기 로직 (마우스 down, move, up)
+  let line, isDown;
+  canvas.on('mouse:down', (o) => {
+    if (activeTool.value !== 'wall') return;
+    console.log('마우스 누름 이벤트');
+    isDown = true;
+    const pointer = canvas.getPointer(o.e);
+    const points = [pointer.x, pointer.y, pointer.x, pointer.y];
+    line = new fabric.Line(points, {
+      stroke: '#5865f2',
+      strokeWidth: 5,
+      selectable: true,
+      type: 'wall',
+      id: `wall-${Date.now()}`
+    });
+    canvas.add(line);
+  });
+  canvas.on('mouse:move', (o) => {
+    if (!isDown || activeTool.value !== 'wall') return;
+    const pointer = canvas.getPointer(o.e);
+    line.set({
+      x2: pointer.x,
+      y2: pointer.y,
+    })
+    canvas.renderAll();
+  })
+  canvas.on('mouse:up', () => {
+    if (activeTool.value !== 'wall') return;
+    isDown = false;
+    saveState();
+  })
+
+  canvas.on('mouse:down', (o) => {
+    if (activeTool.value === 'door' || activeTool.value === 'window') {
+      const pointer = canvas.getPointer(o.e);
+      let newObj;
+      if (activeTool.value === 'door') {
+        newObj = new fabric.Rect({
+          left: pointer.x - 40,
+          top: pointer.y - 10,
+          width: 80,
+          height: 20,
+          fill: '#f2a358',
+          type: 'door',
+          id: `door-${Date.now()}`
+        })
+      } else {
+        newObj = new fabric.Rect({
+          left: pointer.x - 60,
+          top: pointer.y - 5,
+          width: 120,
+          height: 10,
+          fill: '#58c9f2',
+          type: 'window',
+          id: `window-${Date.now()}`
+        })
+      }
+      canvas.add(newObj);
+      saveState();
+    }
+  })
+}
+// 도구 선택
+function selectTool(tool) {
+  activeTool.value = tool;
+  fabricCanvas.value.isDrawingMode = false; // Fabric의 자유 그리기 모드 off
+  if (tool === 'select') {
+    fabricCanvas.value.selection = true;
+    fabricCanvas.value.hoverCursor = 'move';
+  } else {
+    fabricCanvas.value.selection = false;
+    fabricCanvas.value.hoverCursor = 'crosshair';
+  }
+}
+// Undo/Redo 로직
+function saveState() {
+  if (isActionFromHistory.value) return;
+
+  const currentState = fabricCanvas.value.toJSON(['type', 'id']);
+
+  // 현재 인덱스 뒤의 히스토리는 잘라냄 (새로운 액션이 발생했으므로)
+  if (historyIndex.value < history.value.length - 1) {
+    history.value = history.value.slice(0, historyIndex.value + 1);
+  }
+
+  history.value.push(currentState);
+  historyIndex.value = history.value.length - 1;
+}
+
+function undo() {
+  if (canUndo.value) {
+    historyIndex.value--;
+    restoreState()
+  }
+}
+
+function redo() {
+  if (canRedo.value) {
+    historyIndex.value++;
+    restoreState();
+  }
+}
+
+function restoreState() {
+  isActionFromHistory.value = true;
+  const stateToRestore = history.value[historyIndex.value];
+  fabricCanvas.value.loadFromJSON(stateToRestore, () => {
+    fabricCanvas.value.renderAll();
+    isActionFromHistory.value = false;
+  })
+}
+
+// 기타 기능
+function deleteSelected() {
+  const activeObjects = fabricCanvas.value.getActiveObjects();
+  if (!activeObjects.length) return;
+
+  activeObjects.forEach(obj => fabricCanvas.value.remove(obj));
+  fabricCanvas.value.discardActiveObject().renderAll();
+  saveState();
+}
+
+function updateSelectedInfo() {
+  const selected = fabricCanvas.value.getActiveObject();
+  if (!selected) {
+    selectedObjectInfo.value = null;
+    return;
+  }
+  const info = {
+    type: selected.type || 'object',
+    width: Math.round(selected.getScaledWidth()),
+    angle: Math.round(selected.angle),
+  };
+  if (selected.type === 'wall') {
+    const line = selected;
+    const length = Math.sqrt(Math.pow(line.x2 - line.x1, 2) + Math.pow(line.y2 - line.y1, 2));
+    info.width = Math.round(length * line.scaleX); // scaleX를 곱해줘야 리사이즈
+  } else {
+    info.height = Math.round(selected.getScaledHeight());
+  }
+
+  selectedObjectInfo.value = info;
+}
+
+// 프로젝트 저장
+async function handleSaveProject() {
+  if (!currentProject.value) return;
+
+  // Fabric 캔버스 객체를 API가 요구하는 간단한 JSON 포맷으로 변환
+  const planData = {
+    walls: [],
+    doors: [],
+    windows: [],
+  };
+  fabricCanvas.value.getObjects().forEach(obj => {
+    switch (obj.type) {
+      case 'wall': {
+        const start = obj.getPointByOrigin('left', 'top');
+        const end = obj.getPointByOrigin('right', 'bottom');
+        planData.walls.push({
+          start: {
+            x: start.x,
+            y: start.y,
+          },
+          end: {
+            x: end.x,
+            y: end.y,
+          }
+        });
+      }
+        break;
+      case 'door':
+      case 'window': {
+        const data = {
+          position: {
+            x: obj.left + obj.getScaledWidth() / 2,
+            y: obj.top + obj.getScaledHeight() / 2,
+          },
+          width: obj.getScaledWidth(),
+        };
+        if (obj.type === 'door') planData.doors.push(data);
+        else planData.windows.push(data)
+      }
+        break;
+    }
+  })
+
+  try {
+    const projectData = {
+      title: currentProject.value.title,
+      planData,
+    };
+
+    // 저장 후, 서버로부터 계산된 metrics 데이터를 다시 받아와 갱신
+    const response = await api.updateProject(currentProject.value.id, projectData);
+    currentProject.value = response.data;
+
+    ElMessage.success('프로젝트가 성공적으로 저장되었습니다.');
+  } catch (error) {
+    console.error("프로젝트 저장 실해:", error);
+  }
+}
 
 async function loadProject(projectId) {
   try {
@@ -259,34 +486,9 @@ async function loadProject(projectId) {
 
     // 캔버스 초기화 및 다시 그리기
     await nextTick(); // DOM 업데이트를 기다립
-    initializeCanvas();
   } catch (error) {
     console.log("프로젝트 로딩 실패:", error);
     // 에러 메세지는 언터셉처가 처리
-  }
-}
-
-// 프로젝트 저장
-async function handleSaveProject() {
-  if (!currentProject.value) return;
-
-  try {
-    const projectData = {
-      title: currentProject.value.title,
-      planData: {
-        walls: walls.value,
-        doors: doors.value,
-        windows: windows.value,
-      }
-    };
-
-    // 저장 후, 서버로부터 계산된 metrics 데이터를 다시 받아와 갱신
-    const response = await api.updateProject(currentProject.value.id, projectData);
-    currentProject.value = response.data;
-
-    ElMessage.success('프로젝트가 성공적으로 저장되었습니다.');
-  } catch (error) {
-    console.error("프로젝트 저장 실해:", error);
   }
 }
 
@@ -313,192 +515,6 @@ async function handleCreateProject() {
     } catch (error) {
       console.error("프로젝트 생성 실패:", error);
     }
-  }
-}
-
-// -- 핵심 드로잉 로직
-
-/**
- * 캔버스를 완전히 새로 그리는 함수
- */
-const redrawCanvas = () => {
-  if (!ctx.value) return;
-  const canvas = drawingCanvas.value;
-  ctx.value.clearRect(0, 0, canvas.width, canvas.height);
-
-  // 1. 벽 그리기
-  ctx.value.strokeStyle = '#5865f2';  // 완성된 벽 색상 (Primary Color)
-  ctx.value.lineWidth = 5;
-  ctx.value.lineCap = 'round';
-  walls.value.forEach(wall => {
-    ctx.value.beginPath();
-    ctx.value.moveTo(wall.start.x, wall.start.y);
-    ctx.value.lineTo(wall.end.x, wall.end.y);
-    ctx.value.stroke();
-  });
-
-  // 2. 문 그리기
-  ctx.value.fillStyle = '#f2a358';  // 문 색상
-  doors.value.forEach(door => {
-    // 문은 간단히 사각형으로 표현
-    ctx.value.fillRect(door.position.x - door.width / 2, door.position.y - 10, door.width, 20);
-  });
-
-  // 3. 창문 그리기
-  ctx.value.fillStyle = '#58c9f2';  // 창문 색상
-  windows.value.forEach(window => {
-    ctx.value.fillRect(window.position.x - window.width / 2, window.position.y - 5, window.width, 10);
-  })
-
-  // 4. 현재 그리고 중인 벽 미리모기
-  if (isDrawing.value && (activeTool.value === 'wall')) {
-    ctx.value.strokeStyle = '#e2e2e2';  // 그리는 중인 선 색상 (Text Color)
-    ctx.value.lineWidth = 2;
-    ctx.value.setLineDash([5, 5]);  // 점선으로 표시
-
-    ctx.value.beginPath();
-    ctx.value.moveTo(startPoint.value.x, startPoint.value.y);
-    ctx.value.lineTo(currentPoint.value.x, currentPoint.value.y);
-    ctx.value.stroke();
-
-    ctx.value.setLineDash([]);  // 점선 스타일 초기화
-  }
-}
-
-// 도구 선택
-function selectTool(tool) {
-  // 같은 버튼을 다시 누르면 선택 해제
-  activeTool.value = (activeTool.value === tool) ? null : tool;
-}
-
-// -- 마우스 동작 함수
-/**
- * mousedown, mousemove, mouseup은 '벽' 그리기 전용으로 사용
- */
-// 마우스 버튼 눌렀을 때
-const handleMouseDown = (event) => {
-  if (activeTool.value !== 'wall') return;
-
-  isDrawing.value = true;
-  startPoint.value = {
-    x: event.offsetX,
-    y: event.offsetY,
-  }
-  currentPoint.value = {
-    x: event.offsetX,
-    y: event.offsetY,
-  }
-}
-
-/**
- * 마우스 움직일 때
- */
-const handleMouseMove = (event) => {
-  if (!isDrawing.value) return;
-
-  currentPoint.value = {
-    x: event.offsetX,
-    y: event.offsetY,
-  };
-
-  // 실시간으로 캔버스를 다시 그려서 미리보기 선을 보여줌
-  redrawCanvas();
-}
-
-/**
- * 마우스 버튼 뗐을 때 (또는 캔버스 밖으로 나갔을 때)
- */
-const handleMouseUp = () => {
-  if (!isDrawing.value || activeTool.value !== 'wall') {
-    isDrawing.value = false;
-    return;
-  }
-
-  // 시작점과 끝점이 거의 같으면 그리지 않음 (단순 클릭 방지)
-  const distance = Math.sqrt(
-    Math.pow(currentPoint.value.x - startPoint.value.x, 2) +
-    Math.pow(currentPoint.value.y - startPoint.value.y, 2)
-  );
-  if (distance < 5) return;
-
-  // 완성된 벽을 데이터 배열에 추가
-  const newWall = {
-    start: { ...startPoint.value },
-    end: { ...currentPoint.value },
-  };
-  walls.value.push(newWall);
-
-  // 최종적으로 캔버스를 다시 그려서 안성된 벽을 표시
-  redrawCanvas();
-  isDrawing.value = false;
-}
-
-// 클릭 이벤트는 '문', '창문' 추가와 '삭제'에 사용
-const handleClick = (event) => {
-  const clickPos = {
-    x: event.offsetX,
-    y: event.offsetY,
-  };
-
-  if (activeTool.value === 'door') {
-    doors.value.push({
-      id: `door-${Date.now()}`, // 삭제를 위한 임시 ID
-      position: clickPos,
-      width: 80,
-    });
-  } else if (activeTool.value === 'window') {
-    windows.value.push({
-      id: `windows-${Date.now()}`,
-      position: clickPos,
-      width: 120,
-    });
-  } else if (activeTool.value === 'delete') {
-    deleteElementAt(clickPos);
-  }
-
-  redrawCanvas();
-}
-
-// 삭제 로직
-function deleteElementAt(pos) {
-  const tolerance = 15; // 클릭 허용 오차 범위
-
-  // 1. 문 삭제 확인
-  let foundIndex = doors.value.findIndex(door =>
-    Math.abs(pos.x - door.position.x) < door.width / 2 &&
-    Math.abs(pos.y - door.position.y) < tolerance
-  );
-  if (foundIndex > -1) {
-    doors.value.splice(foundIndex, 1);
-    return;
-  }
-
-  // 2. 창문 삭제 확인
-  foundIndex = windows.value.findIndex(window =>
-    Math.abs(pos.x - window.position.x) < window.width / 2 &&
-    Math.abs(pos.y - window.position.y) < tolerance
-  );
-  if (foundIndex > -1) {
-    windows.value.splice(foundIndex, 1);
-    return;
-  }
-
-  // 3. 벽 삭제 확인 (점과 선 사이의 거리 계산)
-  foundIndex = walls.value.findIndex(wall => {
-    const dx = wall.end.x - wall.start.x;
-    const dy = wall.end.y - wall.start.y;
-    const lengthSq = dx * dx + dy * dy;
-    if (lengthSq === 0) return false;
-    let t = ((pos.x - wall.start.x) * dx + (pos.y - wall.start.y) * dy) / lengthSq;
-    t = Math.max(0, Math.min(1, t));
-    const closestX = wall.start.x + t * dx;
-    const closestY = wall.start.y + t * dy;
-    const distSq = Math.pow(pos.x - closestX, 2) + Math.pow(pos.y - closestY, 2);
-    return distSq < tolerance * tolerance;
-  });
-
-  if (foundIndex > -1) {
-    walls.value.splice(foundIndex, 1);
   }
 }
 
@@ -615,7 +631,6 @@ async function handleExport(format) {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 2;
 }
 
 /* --- 추가된 스타일 --- */
@@ -658,5 +673,10 @@ async function handleExport(format) {
   padding: 10px;
   background-color: var(--bg-color);
   border-radius: 4px;
+}
+
+#floorplan-canvas {
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
 }
 </style>
