@@ -2,7 +2,7 @@
   <div>
     <el-container class="app-container">
       <!-- 왼쪽 도구 모음 (Aside) -->
-      <el-aside width="240px">
+      <el-aside width="280px">
         <div class="toolbar">
           <h2 class="toolbar-title">
             프로젝트 관리
@@ -41,6 +41,29 @@
               <el-button :icon="Delete" @click="deleteSelected" />
             </el-tooltip>
           </el-button-group>
+
+          <!-- 스냅 토글 스위치 -->
+          <div class="tool-option">
+            <span>
+              스냅 활성화
+            </span>
+            <el-switch v-model="isSnapEnabled" />
+          </div>
+
+          <h3 class="tool-group-title">
+            가구 라이브러리
+          </h3>
+          <div class="furniture-list">
+            <div class="furniture-item" v-for="item in furnitureLibrary" :key="item.type" draggable="true"
+              @dragstart="handleDragStart($event, item)">
+              <el-icon>
+                <component :is="item.icon" />
+              </el-icon>
+              <span>
+                {{ item.name }}
+              </span>
+            </div>
+          </div>
 
           <!-- 프로젝트 관리 부분 -->
           <h3 class="tool-group-title">
@@ -145,7 +168,7 @@
 
         <!-- 중앙 캔버스 영억 (Main) -->
         <el-main>
-          <div class="canvas-wrapper" ref="canvasWrapper">
+          <div class="canvas-wrapper" ref="canvasWrapper" @dragover.prevent @drop="handleDrop">
             <canvas id="floorplan-canvas"></canvas>
           </div>
         </el-main>
@@ -170,6 +193,9 @@ import {
   Pointer,
   RefreshLeft,
   RefreshRight,
+  Box,
+  House,
+  Monitor
 } from '@element-plus/icons-vue';
 import * as api from '@/api/api';
 
@@ -185,6 +211,32 @@ const windows = ref([]);  // 창문 데이터
 const backgroundImage = ref(null);
 const activeTool = ref('select'); // 'wall', 'door', 'window' 등.
 const fabricCanvas = ref(null);
+const isSnapEnabled = ref(true); // 스냅 기능 활성화 여부
+const gridCellSize = 20; // 그리드 한 칸 크기 (px)
+const snapTolerance = 10; // 스냅이 감지되는 거리 (px)
+const furnitureLibrary = ref([
+  {
+    type: 'desk',
+    name: '책상',
+    icon: Monitor,
+    width: 120, height: 60,
+    color: '#8b4513'
+  },
+  {
+    type: 'sofa',
+    name: '소파',
+    icon: House,
+    width: 180, height: 80,
+    color: '#a0522d'
+  },
+  {
+    type: 'box',
+    name: '수납장',
+    icon: Box,
+    width: 50, height: 50,
+    color: '#d2691e'
+  },
+])
 
 // Undo/Redo 상태
 const history = ref([]);
@@ -250,13 +302,90 @@ onMounted(() => {
   })
   fabricCanvas.value = canvas;
 
+  drawGrid(); // 그리드 그리기
   setupCanvasListeners();
+  //saveState(); // 초기 상태 저장
 })
 
+// 그리드 그리는 함수
+function drawGrid() {
+  const canvas = fabricCanvas.value;
+  const width = canvas.getWidth();
+  const height = canvas.getHeight();
+
+  for (let i = 0; i < width / gridCellSize; i++) {
+    const x = i * gridCellSize;
+    const line = new fabric.Line([x, 0, x, height], {
+      stroke: '#42464d', // 테두리 색상과 유사
+      strokeWidth: 1,
+      selectable: false, // 선택 불가
+      evented: false, // 이벤트 불가
+    });
+    canvas.add(line);
+  }
+
+  for (let i = 0; i < height / gridCellSize; i++) {
+    const y = i * gridCellSize;
+    const line = new fabric.Line([0, y, width, y], {
+      stroke: '#42464d',
+      strokeWidth: 1,
+      selectable: false,
+      eventd: false,
+    })
+    canvas.add(line);
+  }
+
+  // 그린 그리드 선들이 다른 객체들 뒤로 가도록 함
+  //canvas.sendToBack(canvas.getObjects('line'));
+}
+
+// Fabric 캔버스 이벤트 리스터 설정
 function setupCanvasListeners() {
   const canvas = fabricCanvas.value;
 
-  // 객체가 수정되었을때
+  // 객체 이동 시 스냅 로직
+  canvas.on('object:moving', (e) => {
+    if (!isSnapEnabled.value) return;
+
+    const target = e.target;
+
+    // 1. 그리드에 스냅
+    target.set({
+      left: Math.round(target.left / gridCellSize) * gridCellSize,
+      top: Math.round(target.top / gridCellSize) * gridCellSize
+    })
+
+    // 2, 다른 객체의 가장자리에 스냅 (단순화된 예시)
+    canvas.forEachObject(obj => {
+      if (obj === target) return;
+
+      // 수직 스냅 (좌/우)
+      if (Math.abs(target.left - obj.left) < snapTolerance) {
+        target.set({
+          left: obj.left
+        });
+      }
+      if (Math.abs(target.left - (obj.left + obj.getScaledWidth())) < snapTolerance) {
+        target.set({
+          left: obj.left + obj.getScaledWidth()
+        })
+      }
+
+      // 수평 스냅 (상/하)
+      if (Math.abs(target.top - obj.top) < snapTolerance) {
+        target.set({
+          top: obj.top
+        })
+      }
+      if (Math.abs(target.top - (obj.top + obj.getScaledHeight())) < snapTolerance) {
+        target.set({
+          top: obj.top + obj.getScaledHeight()
+        })
+      }
+    })
+  })
+
+  // 객체 수정 이벤트 리스너
   canvas.on('object:modified', (e) => {
     // 그룹 자체를 수정할 때 내부 객체들의 정보 업데이트
     if (e.target.type === 'group') {
@@ -280,15 +409,15 @@ function setupCanvasListeners() {
     line = new fabric.Line(points, {
       stroke: '#5865f2',
       strokeWidth: 5,
-      selectable: false,
+      selectable: false, // 개별 선택 비활성화
       originX: 'center',
       originY: 'center',
       type: 'wall-line',
-      id: `wall-${Date.now()}`
     });
     // 그리는 동안에는 아직 그룹화 X
     canvas.add(line);
   });
+
   canvas.on('mouse:move', (o) => {
     if (!isDown || activeTool.value !== 'wall') return;
     const pointer = canvas.getPointer(o.e);
@@ -297,7 +426,8 @@ function setupCanvasListeners() {
       y2: pointer.y,
     })
     canvas.renderAll();
-  })
+  });
+
   canvas.on('mouse:up', (o) => {
     if (activeTool.value !== 'wall' || !isDown) return;
     isDown = false;
@@ -320,8 +450,19 @@ function setupCanvasListeners() {
     })
 
     const group = new fabric.Group([line, text], {
-
+      left: (line.x1 + line.x2) / 2,
+      top: (line.y1 + line.y2) / 2,
+      angle: calcAngle(line.x1, line.y1, line.x2, line.y2),
+      // 커스텀 데이터
+      type: 'wall',
+      id: `wall-${Date.now()}`,
     })
+
+    // 임시로 그렸던 선을 지우고 그룹 추가
+    canvas.remove(line);
+    canvas.add(group);
+    canvas.setActiveObject(group); // 새로 만든 그룹 선택
+
     saveState();
   })
 
@@ -355,6 +496,36 @@ function setupCanvasListeners() {
     }
   })
 }
+
+// 벽 각도 계산 함수
+function calcAngle(x1, y1, x2, y2) {
+  return Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+}
+
+// 그룹 내 치수 텍스트 업데이트 함수
+function updateDimensionText(group) {
+  if (group.type !== 'wall') return;
+
+  const wallLine = group.getObjects('wall-line')[0];
+  const dimensionText = group.getObjects('text')[0];
+
+  // 그룹의 스케일링을 반영하여 실제 길이 계산
+  const newLength = wallLine.getScaledWidth();
+
+  dimensionText.set({
+    text: Math.round(newLength) + ' px'
+  });
+
+  // 텍스트가 벽의 회전에 따라 항상 바로 서 있도록 조정
+  const groupAngle = group.angle;
+  dimensionText.set({
+    angle: -groupAngle,
+  });
+
+  group.addWithUpdate(); // 그룹 내 객체 변경 후 업데이트
+  fabricCanvas.value.renderAll();
+}
+
 // 도구 선택
 function selectTool(tool) {
   activeTool.value = tool;
@@ -421,17 +592,23 @@ function updateSelectedInfo() {
     selectedObjectInfo.value = null;
     return;
   }
-  const info = {
-    type: selected.type || 'object',
-    width: Math.round(selected.getScaledWidth()),
-    angle: Math.round(selected.angle),
-  };
+
+  let info;
+  // 그룹(벽)일 경우와 단일 객체일 경우를 분리
   if (selected.type === 'wall') {
-    const line = selected;
-    const length = Math.sqrt(Math.pow(line.x2 - line.x1, 2) + Math.pow(line.y2 - line.y1, 2));
-    info.width = Math.round(length * line.scaleX); // scaleX를 곱해줘야 리사이즈
+    const wallLine = selected.getObjects('wall-line')[0];
+    info = {
+      type: '벽',
+      width: Math.round(wallLine.getScaledWidth()), // 실제 길이
+      angle: Math.round(selected.angle),
+    }
   } else {
-    info.height = Math.round(selected.getScaledHeight());
+    info = {
+      type: selected.type === 'door' ? '문' : selected.type === 'window' ? '창문' : '객체',
+      width: Math.round(selected.getScaledWidth()),
+      height: Math.round(selected.getScaledHeight()),
+      angle: Math.round(selected.angle),
+    };
   }
 
   selectedObjectInfo.value = info;
@@ -568,6 +745,38 @@ async function handleExport(format) {
   }
 }
 
+// Drag & Drop 핸들러
+function handleDragStart(event, item) {
+  // 드래그하는 데이터에 가구 정보 담음
+  event.dataTransfer.setData('application/json', JSON.stringify(item));
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+
+  // 드롭된 데이터 파싱
+  const item = JSON.parse(event.dataTransfer.getData('application/json'));
+  if (!item) return;
+
+  const canvas = fabricCanvas.value;
+  // 캔버스 내 드롭 위치 계산
+  const pointer = canvas.getPointer(event);
+
+  // 데이터 기반으로 Fabric 객체 생성
+  const furniture = new fabric.Rect({
+    left: pointer.x = item.width / 2,
+    top: pointer.y - item.height / 2,
+    width: item.width,
+    height: item.height,
+    fill: item.color,
+    type: item.type,
+    id: `${item.type}-${Date.now()}`
+  })
+
+  canvas.add(furniture);
+  canvas.setActiveObject(furniture);
+  saveState();
+}
 </script>
 
 <style scoped>
@@ -700,6 +909,42 @@ async function handleExport(format) {
   padding: 10px;
   background-color: var(--bg-color);
   border-radius: 4px;
+}
+
+.tool-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 15px;
+  font-size: 0.9rem;
+}
+
+/* 가구 리스트 스타일 */
+.furniture-list {
+  display: grid;
+  grid-template-columns: repeat(2, lfr);
+  gap: 10px;
+}
+
+.furniture-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: grab;
+  text-align: center;
+}
+
+.furniture-item:active {
+  cursor: grabbing;
+}
+
+.furniture-item .el-icon {
+  font-size: 24px;
+  margin-bottom: 5px;
 }
 
 #floorplan-canvas {
