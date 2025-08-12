@@ -108,18 +108,36 @@
                 각도: {{ selectedObjectInfo.angle }} °
               </span>
             </div>
+
+            <!-- 스케일 UI -->
+            <div class="scale-setter" v-if="selectedObjectInfo.type === '벽'">
+              <p>
+                이 벽의 실제 길이를 입력하여 스케일을 설정하세요.
+              </p>
+              <el-input v-model.number="realLengthInput" placeholder="예: 300">
+                <template #append>
+                  <el-select style="width: 80px" v-model="unitInput">
+                    <el-option label="cm" value="cm" />
+                    <el-option label="m" value="m" />
+                  </el-select>
+                </template>
+              </el-input>
+              <el-button style="width: 100%; margin-top: 10px" type="primary" @click="setScale">
+                스케일 설정
+              </el-button>
+            </div>
           </div>
 
           <div v-if="currentProject?.metrics">
             <h3 class="tool-group-title">
-              정보
+              전체 정보
             </h3>
             <div class="metrics-info">
               <span>
-                총 벽 길이: {{ currentProject.metrics.totalWallLength }} px
+                총 벽 길이: {{ currentProject.metrics.totalWallLength }} {{ currentProject.metrics.unit }}
               </span>
               <span>
-                예상 면적: {{ currentProject.metrics.estimatedArea }} px<sup>2</sup>
+                예상 면적: {{ currentProject.metrics.estimatedArea }} {{ currentProject.metrics.unit }}<sup>2</sup>
               </span>
             </div>
           </div>
@@ -129,8 +147,8 @@
           </h3>
           <div class="data-viewer">
             <pre>
-              {{ walls }}
-            </pre>
+    {{ walls }}
+  </pre>
           </div>
 
           <div class="toolbar-footer">
@@ -237,6 +255,8 @@ const furnitureLibrary = ref([
     color: '#d2691e'
   },
 ])
+const realLengthInput = ref(null);
+const unitInput = ref('cm');
 
 // Undo/Redo 상태
 const history = ref([]);
@@ -614,8 +634,37 @@ function updateSelectedInfo() {
   selectedObjectInfo.value = info;
 }
 
+// 스케일 설정 로직
+async function setScale() {
+  if (!realLengthInput.value || realLengthInput.value <= 0) {
+    ElMessage.error('유효한 실제 길이를 입력하세요.');
+    return;
+  }
+
+  const selected = fabricCanvas.value.getActiveObject();
+  if (!selected || selected.type !== 'wall') {
+    ElMessage.error('스케일을 설정할 벽을 먼저 선택하세요.');
+    return;
+  }
+
+  const wallLine = selected.getObjects('wall-line')[0];
+  const pixelLength = wallLine.getScaledWidth();
+
+  const scaleData = {
+    pixelLength,
+    realLength: realLengthInput.value,
+    unit: unitInput.value,
+  };
+
+  // 변경된 스케일 정보를 포함하여 프로젝트 저장
+  await handleSaveProject(scaleData);
+
+  realLengthInput.value = null; // 입력 필드 초기화
+  ElMessage.success('스케일이 설정되었습니다. 정보가 업데이트됩니다.');
+}
+
 // 프로젝트 저장
-async function handleSaveProject() {
+async function handleSaveProject(scaleData = null) {
   if (!currentProject.value) return;
 
   // Fabric 캔버스 객체를 API가 요구하는 간단한 JSON 포맷으로 변환
@@ -657,12 +706,16 @@ async function handleSaveProject() {
     }
   })
 
-  try {
-    const projectData = {
-      title: currentProject.value.title,
-      planData,
-    };
+  const projectData = {
+    title: currentProject.value.title,
+    planData,
+  };
+  // 스케일 설정 시 받은 scaleData를 요청에 포함
+  if (scaleData) {
+    projectData.scale = scaleData;
+  }
 
+  try {
     // 저장 후, 서버로부터 계산된 metrics 데이터를 다시 받아와 갱신
     const response = await api.updateProject(currentProject.value.id, projectData);
     currentProject.value = response.data;
@@ -945,6 +998,19 @@ function handleDrop(event) {
 .furniture-item .el-icon {
   font-size: 24px;
   margin-bottom: 5px;
+}
+
+.scale-setter {
+  margin-top: 15px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.scale-setter p {
+  font-size: 0.8rem;
+  margin: 0 0 10px 0;
+  color: #a0a0a0;
 }
 
 #floorplan-canvas {
