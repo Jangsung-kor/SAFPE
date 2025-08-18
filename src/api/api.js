@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/stores/auth' // Pinia 스토어 import
 
 // 1. Axios 인스턴스 생성
 const apiClient = axios.create({
@@ -9,13 +10,32 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 })
+// 요청 인터셉터
+apiClient.interceptors.request.use(
+  (config) => {
+    // 컴포넌트 밖에서 스토어 사용
+    const authStore = useAuthStore()
+    const token = authStore.token
 
-// 요청/응답 인터셉터: 에러 핸들링 중 공통 로직 처리
+    if (token) {
+      // 헤더에 Authorization 토큰 추가
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  },
+)
+
+// 응답 인터셉터: 에러 핸들링 중 공통 로직 처리
 apiClient.interceptors.response.use(
   (response) => response, // 성공적인 응답은 그대로 반환
   (error) => {
     // 에러 처리
-    const message = error.response?.data?.message || '알 수 없는 오류가 발생했습니다.'
+    console.log(error)
+    console.log(error.response)
+    const message = error.response?.data || '알 수 없는 오류가 발생했습니다.'
     ElMessage.error(message)
     return Promise.reject(error)
   },
@@ -65,4 +85,15 @@ export const exportProjectFile = (projectId, format = 'png') => {
   return apiClient.get(`/projects/${projectId}/export?format=${format}`, {
     responseType: 'blob',
   })
+}
+
+// --- Auth API ---
+export const registerUser = (userInfo) => {
+  // userInfo: { username, password }
+  return apiClient.post('/auth/register', userInfo)
+}
+
+export const loginUser = (credentials) => {
+  // credentials { username, password }
+  return apiClient.post('/auth/login', credentials)
 }

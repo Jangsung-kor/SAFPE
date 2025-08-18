@@ -12,13 +12,14 @@ import router from './router'
 import './assets/styles/global.css'
 
 const app = createApp(App)
+const pinia = createPinia()
 
 // Element Plus 아이콘을 전역 컴포넌트로 등록
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
-app.use(createPinia())
+app.use(pinia)
 app.use(ElementPlus)
 app.use(router)
 
