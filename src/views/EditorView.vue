@@ -160,8 +160,8 @@
                 PDF
               </el-button>
             </el-button-group>
-            <el-button style="margin-left: 10px;" type="success" :icon="FolderChecked" @click="handleSaveProject"
-              :disabled="!currentProject">
+            <el-button style="margin-left: 10px;" type="success" :icon="FolderChecked"
+              @click="() => handleSaveProject()" :disabled="!currentProject">
               프로젝트 저장
             </el-button>
             <el-button type="danger" @click="handleLogout">
@@ -683,6 +683,7 @@ async function setScale() {
 
 // 프로젝트 저장
 async function handleSaveProject(scaleData = null) {
+  console.log('함수 실행')
   if (!currentProject.value) return;
 
   // Fabric 캔버스 객체를 API가 요구하는 간단한 JSON 포맷으로 변환
@@ -729,6 +730,7 @@ async function handleSaveProject(scaleData = null) {
     planData,
   };
   // 스케일 설정 시 받은 scaleData를 요청에 포함
+  console.log(scaleData)
   if (scaleData) {
     projectData.scale = scaleData;
   }
@@ -740,7 +742,7 @@ async function handleSaveProject(scaleData = null) {
 
     ElMessage.success('프로젝트가 성공적으로 저장되었습니다.');
   } catch (error) {
-    console.error("프로젝트 저장 실해:", error);
+    console.error("프로젝트 저장 실패:", error);
   }
 }
 
