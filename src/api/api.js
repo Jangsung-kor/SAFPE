@@ -97,3 +97,13 @@ export const loginUser = (credentials) => {
   // credentials { username, password }
   return apiClient.post('/auth/login', credentials)
 }
+
+// 공유 링크로 프로젝트 조회 조회 (GET /share/{shareId})
+export const getSharedProject = (shareId) => {
+  return apiClient.get(`/share/${shareId}`)
+}
+
+// 공유 설정 변경 (PUT /projects/{projectId}/share)
+export const updqteProjectShareSettings = (projectId, isPublic) => {
+  return apiClient.put(`/projects/${projectId}/share`, isPublic)
+}

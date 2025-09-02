@@ -3,6 +3,7 @@ import { useAuthStore } from '@/stores/auth'
 import LoginView from '@/views/LoginView.vue'
 import RegisterView from '@/views/RegisterView.vue'
 import EditorView from '@/views/EditorView.vue'
+import ShareView from '@/views/ShareView.vue'
 
 const routes = [
   {
@@ -37,6 +38,11 @@ const routes = [
     },
   },
   */
+  {
+    path: '/share/:id',
+    name: 'Share',
+    component: ShareView,
+  },
 ]
 
 const router = createRouter({

@@ -23,6 +23,26 @@
             </el-button>
           </div>
 
+          <!-- 공유 설정 UI -->
+          <div v-if="currentProject" class="tool-option">
+            <span>
+              프로젝트 공개
+            </span>
+            <el-switch v-model="isProjectPublic" @change="toggleShare" />
+          </div>
+          <div v-if="isProjectPublic && currentProject.shareId" class="share-link-box">
+            <p>
+              공유 링크:
+            </p>
+            <el-input :value="shareLink" readonly>
+              <template #append>
+                <el-button @click="copyShareLink">
+                  복사
+                </el-button>
+              </template>
+            </el-input>
+          </div>
+
           <h3 class="tool-group-title">
             편집 도구
           </h3>
@@ -200,7 +220,7 @@
 
 <script setup>
 import { fabric } from 'fabric'
-import { ref, nextTick, onMounted, computed } from 'vue'
+import { ref, nextTick, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -263,12 +283,12 @@ const furnitureLibrary = ref([
 const realLengthInput = ref(null);
 const unitInput = ref('cm');
 
+const isProjectPublic = ref(false)
+
 // Undo/Redo 상태
 const history = ref([]);
 const historyIndex = ref(-1);
 const isActionFromHistory = ref(false); // Undo,Redo 실행 중인지 여부
-const canUndo = computed(() => historyIndex.value > 0);
-const canRedo = computed(() => historyIndex.value < history.value.length - 1);
 
 // 선택된 객체 정보
 const selectedObjectInfo = ref(null);
@@ -283,6 +303,38 @@ const toolNameMap = {
 const router = useRouter()
 const authStore = useAuthStore()
 
+// --- lifehook
+const canUndo = computed(() => historyIndex.value > 0);
+const canRedo = computed(() => historyIndex.value < history.value.length - 1);
+const shareLink = computed(() => {
+  if (currentProject.value?.shareId) {
+    return `${window.location.origin}/share/${currentProject.value.shareId}`;
+  }
+  return ''
+})
+// 프로젝트가 로드될 때 isProjjectPublic 상태 동기화
+watch(currentProject, (newProject) => {
+  if (newProject) {
+    isProjectPublic.value = newProject.isPublic
+  }
+})
+// 컴포넌트가 마운트되면 resizeObserver를 설정하여 창 크기 변경 감지
+onMounted(() => {
+  const canvasEl = document.getElementById('floorplan-canvas');
+  const wrapperEl = canvasEl.parentElement;
+
+  const canvas = new fabric.Canvas(canvasEl, {
+    width: wrapperEl.offsetWidth,
+    height: wrapperEl.offsetHeight,
+    backgroundColor: '#23272a',
+    selection: true,
+  })
+  fabricCanvas.value = canvas;
+
+  drawGrid(); // 그리드 그리기
+  setupCanvasListeners();
+  //saveState(); // 초기 상태 저장
+})
 
 // --- 함수 ---
 const handleLogout = () => {
@@ -327,23 +379,25 @@ const handleFileChange = async (event) => {
   }
 }
 
-// 컴포넌트가 마운트되면 resizeObserver를 설정하여 창 크기 변경 감지
-onMounted(() => {
-  const canvasEl = document.getElementById('floorplan-canvas');
-  const wrapperEl = canvasEl.parentElement;
+async function toggleShare(isPublic) {
+  try {
+    const res = await api.updqteProjectShareSettings(currentProject.value.id, isPublic)
+    // 응답 받은 최신 프로젝트 정보로 업데이트
+    currentProject.value = res.data;
+    if (isPublic) {
+      ElMessage.success('프로젝트가 공개되었습니다.')
+    } else {
+      ElMessage.info("프로젝트가 비공개로 전환되었습니다.")
+    }
+  } catch (error) {
 
-  const canvas = new fabric.Canvas(canvasEl, {
-    width: wrapperEl.offsetWidth,
-    height: wrapperEl.offsetHeight,
-    backgroundColor: '#23272a',
-    selection: true,
-  })
-  fabricCanvas.value = canvas;
+  }
+}
 
-  drawGrid(); // 그리드 그리기
-  setupCanvasListeners();
-  //saveState(); // 초기 상태 저장
-})
+async function copyShareLink() {
+  await navigator.clipboard.writeText(shareLink.value)
+  ElMessage.success('공유 링크가 복사되었습니다.!')
+}
 
 // 그리드 그리는 함수
 function drawGrid() {
@@ -439,6 +493,7 @@ function setupCanvasListeners() {
 
   // 벽 그리기 로직 (마우스 down, move, up)
   let line, isDown, startPoint;
+  //let isDown, startPoint;
   canvas.on('mouse:down', (o) => {
     if (activeTool.value !== 'wall') return;
     isDown = true;
@@ -448,6 +503,7 @@ function setupCanvasListeners() {
       stroke: '#5865f2',
       strokeWidth: 5,
       selectable: false, // 개별 선택 비활성화
+      evented: false,
       originX: 'center',
       originY: 'center',
       type: 'wall-line',
@@ -478,31 +534,44 @@ function setupCanvasListeners() {
       return;
     }
 
+    canvas.remove(line);
+
+    // 그룹 내부에 들어갈 새로운 선(line) 객체 생성
+    const groupLine = new fabric.Line([0, 0, length, 0], {
+      stroke: '#5865f2',
+      strokeWidth: 5,
+      originX: 'center', // 그룹 내부에서의 원점
+      originY: 'center',
+    })
+
     // 그리기가 끝나면, 벽과 치수를 그룹으로 묶는다.
     const text = new fabric.Text(Math.round(length) + ' px', {
       fontSize: 16,
       fill: '#e2e2e2',
       originX: 'center',
-      originY: 'bottom', // 텍스트를 벽 위쪽에 배치
-      top: -10, // 벽과의 간격
+      originY: 'center',
+      angle: -calcAngle(line.x1, line.y1, line.x2, line.y2),
+      left: length / 2,
+      top: 0,
     })
 
-    const group = new fabric.Group([line, text], {
-      left: (line.x1 + line.x2) / 2,
-      top: (line.y1 + line.y2) / 2,
+    const group = new fabric.Group([groupLine, text], {
+      left: startPoint.x,
+      top: startPoint.y,
+      originX: 'left',
+      originY: 'center',
       angle: calcAngle(line.x1, line.y1, line.x2, line.y2),
       // 커스텀 데이터
       type: 'wall',
       id: `wall-${Date.now()}`,
     })
 
-    // 임시로 그렸던 선을 지우고 그룹 추가
-    canvas.remove(line);
     canvas.add(group);
     canvas.setActiveObject(group); // 새로 만든 그룹 선택
-
     saveState();
   })
+
+
 
   canvas.on('mouse:down', (o) => {
     if (activeTool.value === 'door' || activeTool.value === 'window') {
@@ -683,7 +752,6 @@ async function setScale() {
 
 // 프로젝트 저장
 async function handleSaveProject(scaleData = null) {
-  console.log('함수 실행')
   if (!currentProject.value) return;
 
   // Fabric 캔버스 객체를 API가 요구하는 간단한 JSON 포맷으로 변환
@@ -730,7 +798,6 @@ async function handleSaveProject(scaleData = null) {
     planData,
   };
   // 스케일 설정 시 받은 scaleData를 요청에 포함
-  console.log(scaleData)
   if (scaleData) {
     projectData.scale = scaleData;
   }
