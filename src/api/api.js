@@ -33,8 +33,6 @@ apiClient.interceptors.response.use(
   (response) => response, // 성공적인 응답은 그대로 반환
   (error) => {
     // 에러 처리
-    console.log(error)
-    console.log(error.response)
     const message = error.response?.data || '알 수 없는 오류가 발생했습니다.'
     ElMessage.error(message)
     return Promise.reject(error)
@@ -104,6 +102,6 @@ export const getSharedProject = (shareId) => {
 }
 
 // 공유 설정 변경 (PUT /projects/{projectId}/share)
-export const updqteProjectShareSettings = (projectId, isPublic) => {
-  return apiClient.put(`/projects/${projectId}/share`, isPublic)
+export const updateProjectShareSettings = (projectId, isPublic) => {
+  return apiClient.put(`/projects/${projectId}/share?isPublic=${isPublic}`)
 }

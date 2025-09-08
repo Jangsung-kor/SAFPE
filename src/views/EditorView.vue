@@ -315,7 +315,7 @@ const shareLink = computed(() => {
 // 프로젝트가 로드될 때 isProjjectPublic 상태 동기화
 watch(currentProject, (newProject) => {
   if (newProject) {
-    isProjectPublic.value = newProject.isPublic
+    isProjectPublic.value = newProject.public
   }
 })
 // 컴포넌트가 마운트되면 resizeObserver를 설정하여 창 크기 변경 감지
@@ -381,7 +381,7 @@ const handleFileChange = async (event) => {
 
 async function toggleShare(isPublic) {
   try {
-    const res = await api.updqteProjectShareSettings(currentProject.value.id, isPublic)
+    const res = await api.updateProjectShareSettings(currentProject.value.id, isPublic)
     // 응답 받은 최신 프로젝트 정보로 업데이트
     currentProject.value = res.data;
     if (isPublic) {
