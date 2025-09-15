@@ -214,13 +214,68 @@
           </div>
         </el-main>
       </el-container>
+      <!-- 오른쪽 속성 패널 -->
+      <el-aside width="280px" class="property-panel">
+        <div class="panel-content" v-if="selectedObjectInfo">
+          <h3 class="panel-title">
+            속성 편집
+          </h3>
+          <el-divider />
+
+          <!-- 위치와 크기 섹션-->
+          <div class="prop-group">
+            <div class="prop-row">
+              <div class="prop-item">
+                <label>X</label>
+                <el-input-number v-model="props.left" controls-position="right" @change="updateObjectProps"
+                  size="small" />
+              </div>
+              <div class="prop-item">
+                <label>Y</label>
+                <el-input-number v-model="props.top" controls-position="right" @change="updateObjectProps"
+                  size="small" />
+              </div>
+            </div>
+            <div class="prop-row">
+              <div class="prop-item">
+                <label>W</label>
+                <el-input-number v-model="props.width" :min="1" controls-position="right" @change="updateObjectProps"
+                  size="small" />
+              </div>
+              <div class="prop-item">
+                <label>H</label>
+                <el-input-number v-model="props.height" :min="1" controls-position="right" @change="updateObjectProps"
+                  size="small" :disabled="isWallSelected" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 회전과 기타 속성 섹션-->
+          <div class="props-group">
+            <div class="prop-row-single">
+              <label>각도</label>
+              <el-slider v-model="props.angle" :min="-180" :max="180" @input="updateObjectProps" show-input
+                size="small" />
+            </div>
+          </div>
+
+          <!-- 색상 섹션 -->
+          <div class="prop-group">
+            <div class="prop-row-single">
+              <label>색상</label>
+              <el-color-picker v-model="props.fill" @change="updateObjectProps" />
+            </div>
+          </div>
+        </div>
+        <el-empty v-else description="객체를 선택하세요" />
+      </el-aside>
     </el-container>
   </div>
 </template>
 
 <script setup>
 import { fabric } from 'fabric'
-import { ref, nextTick, onMounted, computed, watch } from 'vue'
+import { ref, nextTick, onMounted, computed, watch, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -300,10 +355,20 @@ const toolNameMap = {
   window: '창문 추가',
 }
 
+const props = reactive({
+  left: 0,
+  top: 0,
+  width: 0,
+  height: 0,
+  angle: 0,
+  fill: '#000000',
+})
+
 const router = useRouter()
 const authStore = useAuthStore()
 
 // --- lifehook
+const isWallSelected = computed(() => selectedObjectInfo.value?.type === 'wall')
 const canUndo = computed(() => historyIndex.value > 0);
 const canRedo = computed(() => historyIndex.value < history.value.length - 1);
 const shareLink = computed(() => {
@@ -479,16 +544,19 @@ function setupCanvasListeners() {
 
   // 객체 수정 이벤트 리스너
   canvas.on('object:modified', (e) => {
+    updatePanelFromObject(e.target);
     // 그룹 자체를 수정할 때 내부 객체들의 정보 업데이트
     if (e.target.type === 'group') {
       updateDimensionText(e.target);
     }
-    updateSelectedInfo();
+    //updateSelectedInfo();
     saveState();
   })
 
-  canvas.on('selection:created', updateSelectedInfo);
-  canvas.on('selection:updated', updateSelectedInfo);
+  canvas.on('selection:created', (e) => updatePanelFromObject(e.target));
+  //canvas.on('selection:created', updateSelectedInfo);
+  canvas.on('selection:updated', (e) => updatePanelFromObject(e.target));
+  //canvas.on('selection:updated', updateSelectedInfo);
   canvas.on('selection:cleared', () => { selectedObjectInfo.value = null; });
 
   // 벽 그리기 로직 (마우스 down, move, up)
@@ -542,6 +610,7 @@ function setupCanvasListeners() {
       strokeWidth: 5,
       originX: 'center', // 그룹 내부에서의 원점
       originY: 'center',
+      type: 'wall-line',
     })
 
     // 그리기가 끝나면, 벽과 치수를 그룹으로 묶는다.
@@ -602,6 +671,55 @@ function setupCanvasListeners() {
       saveState();
     }
   })
+}
+/**
+ * (객체 -> 패널) 캔버스 객체의 속성을 패널의 입력 필드로 복사
+ * @param obj
+ */
+function updatePanelFromObject(obj) {
+  if (!obj) {
+    selectedObjectInfo.value = null;
+    return;
+  }
+  selectedObjectInfo.value = obj; // 현재 선택된 객체 저장
+
+  // 벽(그룹)과 일반 객체의 속성 가져옴
+  if (obj.type === 'wall') {
+    const wallLine = obj.getObjects('wall-line')[0];
+    props.width = Math.round(wallLine.getScaledWidth());
+    props.height = Math.round(wallLine.strokeWidth * obj.scaleY); // 벽 두께
+  } else {
+    props.width = Math.round(obj.getScaledWidth());
+    props.height = Math.round(obj.getScaledHeight());
+  }
+
+  props.left = Math.round(obj.left);
+  props.top = Math.round(obj.top);
+  props.angle = Math.round(obj.angle);
+  props.fill = obj.fill || '#000000'; // 채우기 색상이 없는 객체 대비
+}
+/**
+ * (패널 -> 객체) 패널 입력 필드의 변경사항을 캔버스 객체에 적용
+ */
+function updateObjectProps() {
+  const obj = selectedObjectInfo.value;
+  if (!obj) return;
+
+  // 패널 값으로 객체 속성 설정
+  obj.set({
+    left: props.left,
+    top: props.top,
+    angle: props.angle,
+    fill: props.fill,
+  });
+
+  // 변경사항이 즉시 반영되도록 캔버스 재렌더링
+  fabricCanvas.value.renderAll();
+
+  // 수정이 일어났으므로 치수 텍스트 등도 업데이트
+  if (obj.type === 'wall') {
+    updateDimensionText(obj);
+  }
 }
 
 // 벽 각도 계산 함수
@@ -1103,5 +1221,52 @@ function handleDrop(event) {
 #floorplan-canvas {
   border: 2px dashed var(--border-color);
   border-radius: 8px;
+}
+
+.property-panel {
+  background-color: var(--sidebar-bg-color);
+  padding: 20px;
+  border-left: 1px solid var(--border-color);
+  color: var(--text-color);
+}
+
+.panel-content {
+  height: 100%;
+}
+
+.panel-title {
+  margin: 0 0 10px 0;
+  font-weight: 600;
+}
+
+.prop-group {
+  margin-bottom: 20px;
+}
+
+.prop-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.prop-item {
+  flex: 1;
+}
+
+.prop-item label,
+.prop-row-single label {
+  display: block;
+  font-size: 0.8rem;
+  margin-bottom: 5px;
+  color: #a0a0a0;
+}
+
+.prop-row-single {
+  margin-bottom: 10px;
+}
+
+.el-input-number {
+  width: 100%;
 }
 </style>
