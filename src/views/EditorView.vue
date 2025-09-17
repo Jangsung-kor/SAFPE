@@ -109,6 +109,28 @@
           </el-tooltip>
 
           <el-divider />
+          <!-- 레이어 패널 -->
+          <h3 class="tool-group-title">
+            레이어
+          </h3>
+          <div class="layer-panel">
+            <div class="layer-item" v-for="layer in layers" :key="layer.id">
+              <span class="layer-name">
+                {{ layer.name }}
+              </span>
+              <div class="layer-controls">
+                <el-tooltip :content="layer.locked ? '잠금 해제' : '잠금'">
+                  <el-button :icon="layer.locked ? Lock : Unlock" circle size="small"
+                    @click="toggleLayerLock(layer.id)" />
+                </el-tooltip>
+                <el-tooltip :content="layer.visible ? '숨기기' : '보이기'">
+                  <el-button :icon="layer.visible ? View : Hide" circle size="small"
+                    @click="toggleLayerVisibility(layer.id)" />
+                </el-tooltip>
+              </div>
+            </div>
+          </div>
+
           <!-- 선택된 객체 정보 표시 -->
           <div v-if="selectedObjectInfo">
             <h3 class="tool-group-title">
@@ -293,7 +315,11 @@ import {
   RefreshRight,
   Box,
   House,
-  Monitor
+  Monitor,
+  Lock,
+  Unlock,
+  View,
+  Hide,
 } from '@element-plus/icons-vue';
 import * as api from '@/api/api';
 
@@ -363,6 +389,13 @@ const props = reactive({
   angle: 0,
   fill: '#000000',
 })
+// 레이어 상태 관리
+const layers = reactive([
+  { id: 'walls', name: '벽', visible: true, locked: false },
+  { id: 'doors', name: '문', visible: true, locked: false },
+  { id: 'windows', name: '창문', visible: true, locked: false },
+  { id: 'furnitures', name: '가구', visible: true, locked: false },
+])
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -633,6 +666,8 @@ function setupCanvasListeners() {
       // 커스텀 데이터
       type: 'wall',
       id: `wall-${Date.now()}`,
+      // 레이어
+      layer: 'walls',
     })
 
     canvas.add(group);
@@ -654,7 +689,9 @@ function setupCanvasListeners() {
           height: 20,
           fill: '#f2a358',
           type: 'door',
-          id: `door-${Date.now()}`
+          id: `door-${Date.now()}`,
+          // 레이어
+          layer: 'doors',
         })
       } else {
         newObj = new fabric.Rect({
@@ -664,7 +701,9 @@ function setupCanvasListeners() {
           height: 10,
           fill: '#58c9f2',
           type: 'window',
-          id: `window-${Date.now()}`
+          id: `window-${Date.now()}`,
+          // 레이어
+          layer: 'windows',
         })
       }
       canvas.add(newObj);
@@ -1028,12 +1067,50 @@ function handleDrop(event) {
     height: item.height,
     fill: item.color,
     type: item.type,
-    id: `${item.type}-${Date.now()}`
+    id: `${item.type}-${Date.now()}`,
+    // 레이어
+    layer: 'furnitures',
   })
 
   canvas.add(furniture);
   canvas.setActiveObject(furniture);
   saveState();
+}
+
+// 레이어 제어 함수
+function setLayerProperties(layerId, properties) {
+  const canvas = fabricCanvas.value;
+  canvas.getObjects().forEach(obj => {
+    if (obj.layer === layerId) {
+      obj.set(properties);
+    }
+  });
+
+  canvas.renderAll();
+}
+function toggleLayerVisibility(layerId) {
+  const layer = layers.find(l => l.id === layerId);
+  if (layer) {
+    layer.visible = !layer.visible;
+    setLayerProperties(layerId, { visible: layer.visible });
+  }
+}
+function toggleLayerLock(layerId) {
+  const canvas = fabricCanvas.value;
+  const layer = layers.find(l => l.id === layerId);
+  if (layer) {
+    layer.locked = !layer.locked;
+    setLayerProperties(layerId, {
+      selectable: !layer.locked,
+      evented: !layer.locked,
+    });
+
+    // 잠긴 레이어의 객체가 선택되어 있었다면 선택 해제
+    if (layer.locked) {
+      canvas.discardActiveObject();
+      canvas.renderAll();
+    }
+  }
 }
 </script>
 
@@ -1268,5 +1345,31 @@ function handleDrop(event) {
 
 .el-input-number {
   width: 100%;
+}
+
+/* 레이어 스타일 */
+.layer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.layer-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--container-bg-color);
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.layer-name {
+  font-size: 0.9rem;
+}
+
+.layer-controls {
+  display: flex;
+  gap: 5px;
 }
 </style>
