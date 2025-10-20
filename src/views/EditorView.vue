@@ -335,9 +335,10 @@ const windows = ref([]);  // 창문 데이터
 const backgroundImage = ref(null);
 const activeTool = ref('select'); // 'wall', 'door', 'window' 등.
 const fabricCanvas = ref(null);
+const guideLines = ref([]); // 현재 화면에 그려진 가이드라인 객체들을 저장
 const isSnapEnabled = ref(true); // 스냅 기능 활성화 여부
 const gridCellSize = 20; // 그리드 한 칸 크기 (px)
-const snapTolerance = 10; // 스냅이 감지되는 거리 (px)
+const snapTolerance = 5; // 스냅이 감지되는 거리 (px)
 const furnitureLibrary = ref([
   {
     type: 'desk',
@@ -431,7 +432,6 @@ onMounted(() => {
 
   drawGrid(); // 그리드 그리기
   setupCanvasListeners();
-  //saveState(); // 초기 상태 저장
 })
 
 // --- 함수 ---
@@ -536,41 +536,145 @@ function setupCanvasListeners() {
   // 객체 이동 시 스냅 로직
   canvas.on('object:moving', (e) => {
     if (!isSnapEnabled.value) return;
-
     const target = e.target;
 
-    // 1. 그리드에 스냅
-    target.set({
-      left: Math.round(target.left / gridCellSize) * gridCellSize,
-      top: Math.round(target.top / gridCellSize) * gridCellSize
+    // 최종적으로 적용될 스냅 위치. 초기값은 현재 객체 위치.
+    let finalSnap = {
+      left: target.left,
+      top: target.top,
+    };
+
+    // 스냅이 발생했는지 여부
+    let snappedX = false;
+    let snappedY = false;
+
+    // 이전 가이드라인 모두 제거
+    clearGuideLines();
+
+    // 활성화된 객체의 모든 정렬 지점을 계산
+    const targetVCentering = target.getCenterPoint().x;
+    const targetHCentering = target.getCenterPoint().y;
+    const targetBoundingRect = target.getBoundingRect(true); // true: 절대 좌표
+
+    const targetVCoords = [
+      targetBoundingRect.left,
+      targetVCentering,
+      targetBoundingRect.left + targetBoundingRect.width
+    ]
+    const targetHCoords = [
+      targetBoundingRect.top,
+      targetHCentering,
+      targetBoundingRect.top + targetBoundingRect.height
+    ]
+
+    // 캔버스의 다른 모든 객체와 비교하여 스냅 위치를 "찾기만"한다.
+    canvas.forEachObject(obj => {
+      if (obj === target) return; // 자기 자신은 제외
+
+      const objVCentering = obj.getCenterPoint().x;
+      const objHCentering = obj.getCenterPoint().y;
+      const objBoundingRect = obj.getBoundingRect(true);
+
+      const objVCoords = [
+        objBoundingRect.left,
+        objVCentering,
+        objBoundingRect.left + objBoundingRect.width
+      ]
+      const objHCoords = [
+        objBoundingRect.top,
+        objHCentering,
+        objBoundingRect.top + objBoundingRect.height
+      ]
+
+      // 수직 가이드라인 확인 및 그리기
+      for (const targetV of targetVCoords) {
+        for (const objV of objVCoords) {
+          if (Math.abs(targetV - objV) < snapTolerance) {
+            // 이미 다른 곳에 x축 스냅이 되었다면, 더 가까운 곳에만 스냅
+            const currentDiff = Math.abs(targetV - objV);
+            const snappedDiff = Math.abs((targetV - (target.left - finalSnap.left)) - objV);
+
+            if (!snappedDiff || currentDiff < snappedDiff) {
+              finalSnap.left = target.left - (targetV - objV);
+              snappedX = true;
+            }
+          }
+        }
+      }
+
+      // 수평 가이드라인 확인 및 그리기
+      for (const targetH of targetHCoords) {
+        for (const objH of objHCoords) {
+          if (Math.abs(targetH - objH) < snapTolerance) {
+            // 이미 다른 곳에 y축 스냅이 되었다면, 더 가까운 곳에만 스냅
+            const currentDiff = Math.abs(targetH - objH);
+            const snappedDiff = Math.abs((targetH - (target.top - finalSnap.top)) - objH);
+
+            if (!snappedDiff || currentDiff < snappedDiff) {
+              finalSnap.top = target.top - (targetH - objH);
+              snappedY = true;
+            }
+          }
+        }
+      }
     })
 
-    // 2, 다른 객체의 가장자리에 스냅 (단순화된 예시)
+    // 모든 객체와의 비교가 끝난 후, 최종 위치를 "단 한 번만" 설정
+    target.set({
+      left: finalSnap.left,
+      top: finalSnap.top,
+    });
+
+    // 최종 위치를 기준으로 가이드라인 그리기
+    const finalTargetRect = target.getBoundingRect(true);
+    const finalVCentering = target.getCenterPoint().x;
+    const finalHCentering = target.getCenterPoint().y;
+
     canvas.forEachObject(obj => {
       if (obj === target) return;
+      const objRect = obj.getBoundingRect(true);
+      const objVCentering = (objRect.left + objRect.width / 2);
+      const objHCentering = (objRect.top + objRect.height / 2);
 
-      // 수직 스냅 (좌/우)
-      if (Math.abs(target.left - obj.left) < snapTolerance) {
-        target.set({
-          left: obj.left
-        });
-      }
-      if (Math.abs(target.left - (obj.left + obj.getScaledWidth())) < snapTolerance) {
-        target.set({
-          left: obj.left + obj.getScaledWidth()
-        })
-      }
+      const alignments = [
+        // 수직 정렬 (Vertical)
+        { target: finalTargetRect.left, obj: objRect.left, type: 'vertical' },
+        { target: finalTargetRect.left, obj: objVCentering, type: 'vertical' },
+        { target: finalTargetRect.left, obj: objRect.left + objRect.width, type: 'vertical' },
+        { target: finalVCentering, obj: objRect.left, type: 'vertical' },
+        { target: finalVCentering, obj: objVCentering, type: 'vertical' },
+        { target: finalVCentering, obj: objRect.left + objRect.width, type: 'vertical' },
+        { target: finalTargetRect.left + finalTargetRect.width, obj: objRect.left, type: 'vertical' },
+        { target: finalTargetRect.left + finalTargetRect.width, obj: objVCentering, type: 'vertical' },
+        { target: finalTargetRect.left + finalTargetRect.width, obj: objRect.left + objRect.width, type: 'vertical' },
 
-      // 수평 스냅 (상/하)
-      if (Math.abs(target.top - obj.top) < snapTolerance) {
-        target.set({
-          top: obj.top
-        })
-      }
-      if (Math.abs(target.top - (obj.top + obj.getScaledHeight())) < snapTolerance) {
-        target.set({
-          top: obj.top + obj.getScaledHeight()
-        })
+        // 수평 정렬 (Horizontal)
+        { target: finalTargetRect.top, obj: objRect.top, type: 'horizontal' },
+        { target: finalTargetRect.top, obj: objHCentering, type: 'horizontal' },
+        { target: finalTargetRect.top, obj: objRect.top + objRect.height, type: 'horizontal' },
+        { target: finalHCentering, obj: objRect.top, type: 'horizontal' },
+        { target: finalHCentering, obj: objHCentering, type: 'horizontal' },
+        { target: finalHCentering, obj: objRect.top + objRect.height, type: 'horizontal' },
+        { target: finalTargetRect.top + finalTargetRect.height, obj: objRect.top, type: 'horizontal' },
+        { target: finalTargetRect.top + finalTargetRect.height, obj: objHCentering, type: 'horizontal' },
+        { target: finalTargetRect.top + finalTargetRect.height, obj: objRect.top + objRect.height, type: 'horizontal' },
+      ];
+
+      for (const align of alignments) {
+        // 부동소수점 오차를 감안하여 1px 미만의 차이는 같다고 판단
+        if (Math.abs(align.target - align.obj) < 1) {
+          if (align.type === 'vertical') {
+            drawGuideLine({
+              x1: align.obj, y1: 0,
+              x2: align.obj, y2: canvas.height,
+            });
+          } else { // horizontal
+            drawGuideLine({
+              x1: 0, y1: align.obj,
+              x2: canvas.width, y2: align.obj,
+            });
+          }
+        }
       }
     })
   })
@@ -624,6 +728,7 @@ function setupCanvasListeners() {
   });
 
   canvas.on('mouse:up', (o) => {
+    clearGuideLines();
     if (activeTool.value !== 'wall' || !isDown) return;
     isDown = false;
 
@@ -711,6 +816,35 @@ function setupCanvasListeners() {
     }
   })
 }
+
+/**
+ * 스마트 가이드라인을 그리는 함수
+ * @param {Object} coords
+ */
+function drawGuideLine(coords) {
+  const line = new fabric.Line([
+    coords.x1, coords.y1, coords.x2, coords.y2
+  ], {
+    stroke: 'red',
+    strokeWidth: 1,
+    selectable: false,
+    evented: false,
+    strokeDashArray: [5, 5], // 점선
+  })
+
+  fabricCanvas.value.add(line);
+  guideLines.value.push(line);
+}
+
+/**
+ * 모든 스마트 가이드라인을 캔버스에서 제거하는 함수
+ */
+function clearGuideLines() {
+  guideLines.value.forEach(line => fabricCanvas.value.remove(line));
+  guideLines.value = [];
+  fabricCanvas.value.renderAll();
+}
+
 /**
  * (객체 -> 패널) 캔버스 객체의 속성을 패널의 입력 필드로 복사
  * @param obj
