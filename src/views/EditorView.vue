@@ -10,9 +10,46 @@
 
           <el-divider />
 
+          <!--
           <el-button @click="handleCreateProject" :icon="FolderAdd">
             새 프로젝트
           </el-button>
+          -->
+          <!-- 새 프로젝트 생성 버튼 -->
+          <el-button style="width: 100%" @click="openCreateDialog" :icon="FolderAdd" type="primary">
+            새 프로젝트 (AI 분석)
+          </el-button>
+
+          <!-- 새 프로젝트 생성 다이얼로그 -->
+          <el-dialog v-model="createDialogVisible" title="새 프로젝트 생성 (AI 분석)" width="500px">
+            <el-form ref="createFormRef" :model="createForm" label-width="120px">
+              <el-form-item label="프로젝트 제목" prop="title"
+                :rules="{ required: true, message: '제목을 입력하세요', trigger: 'blur' }">
+                <el-input v-model="createForm.title" />
+              </el-form-item>
+              <el-form-item label="평면도 사진" prop="file"
+                :rules="{ required: true, message: '분석할 사진을 업로드하세요', trigger: 'blur' }">
+                <el-upload ref="uploadRef" :auto-upload="false" :limit="1" :on-change="handleFileSelect"
+                  :on-exceed="handleFileExceed">
+                  <template #trigger>
+                    <el-button type="primary">
+                      파일 선택
+                    </el-button>
+                  </template>
+                </el-upload>
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <span class="dialog-footer">
+                <el-button @click="createDialogVisible = false">
+                  취소
+                </el-button>
+                <el-button :loading="isCreating" type="primary" @click="handleCreateProject">
+                  생성
+                </el-button>
+              </span>
+            </template>
+          </el-dialog>
 
           <div v-if="currentProject">
             <h3 class="tool-group-title">
@@ -188,9 +225,7 @@
             데이터 확인
           </h3>
           <div class="data-viewer">
-            <pre>
-    {{ walls }}
-  </pre>
+            <pre>{{ walls }}</pre>
           </div>
 
           <div class="toolbar-footer">
@@ -297,7 +332,7 @@
 
 <script setup>
 import { fabric } from 'fabric'
-import { ref, nextTick, onMounted, computed, watch, reactive } from 'vue'
+import { ref, nextTick, onMounted, computed, watch, reactive, createApp } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
@@ -401,6 +436,16 @@ const layers = reactive([
 const router = useRouter()
 const authStore = useAuthStore()
 
+// 프로젝트 생성 다이얼로그 상태 2025.10.27
+const createDialogVisible = ref(false)
+const createFormRef = ref(null)
+const uploadRef = ref(null)
+const isCreating = ref(false)
+const createForm = reactive({
+  title: '나의 새 평면도',
+  file: null,
+})
+
 // --- lifehook
 const isWallSelected = computed(() => selectedObjectInfo.value?.type === 'wall')
 const canUndo = computed(() => historyIndex.value > 0);
@@ -435,6 +480,127 @@ onMounted(() => {
 })
 
 // --- 함수 ---
+/**
+ * 다이얼로그 여는 함수
+ * @createAt 2025.10.27
+ */
+const openCreateDialog = () => {
+  createForm.title = '나의 새 평면도';
+  createForm.file = null;
+
+  // 이전에 업로드 된 파일 목록 지우기
+  uploadRef.value?.clearFiles();
+  createDialogVisible.value = true;
+}
+
+const handleFileSelect = (file) => {
+  createForm.file = file.raw; // 실제 파일 객체 저장
+}
+
+const handleFileExceed = (files) => {
+  uploadRef.value.clearFiles();
+  const file = files[0];
+  uploadRef.value.handleStart(file);
+}
+
+/**
+ * 새 프로젝트 생성
+ * @createAt 2025.10.27
+ */
+const handleCreateProject = async () => {
+  await createFormRef.value.validate(async (valid) => {
+    if (valid) {
+      isCreating.value = true;
+      try {
+        const res = await api.createProjectWithImage(createForm.title, createForm.file);
+
+        await loadProjectData(res.data);
+
+        ElMessage.success('AI 분석을 통해 프로젝트가 생성되었습니다!');
+        createDialogVisible.value = false;
+
+      } catch (error) {
+        console.error('프로젝트 생성 실패:', error);
+      } finally {
+        isCreating.value = false;
+      }
+    }
+  })
+}
+/**
+ * 서버에서 불러온 프로젝트 데이터 화면에 바인딩해주는 함수
+ * @param projectData
+ * @createAt 2025.10.27
+ */
+async function loadProjectData(projectData) {
+  currentProject.value = projectData;
+
+  const canvas = fabricCanvas.value;
+  canvas.clear();
+
+  // 배경 이미지 설정
+  if (projectData.backgroundImageUrl) {
+    const bgImageUrl = `http://localhost:8080${projectData.backgroundImageUrl}`;
+    canvas.setBackgroundImage(bgImageUrl, canvas.renderAll.bind(canvas), {
+      originX: 'left',
+      originY: 'top',
+    });
+  }
+
+  // AI가 분석한 벽 데이터로 객체 생성
+  if (projectData.planData?.walls) {
+    projectData.planData.walls.forEach(wall => {
+      // 벽을 그리는 로직
+      createWallObjectOnCanvas(wall);
+    })
+  }
+  // 문, 창문 등 다른 객체 로드 로직..
+
+  canvas.renderAll();
+  saveState();
+}
+/**
+ * 벽을 그리는 로직
+ * @param wallData
+ * @createAt 2025.10.27
+ */
+function createWallObjectOnCanvas(wallData) {
+  // const groupLine = new fabric.Line([0, 0, length, 0], {
+  //   stroke: '#5865f2',
+  //   strokeWidth: 5,
+  //   originX: 'center', // 그룹 내부에서의 원점
+  //   originY: 'center',
+  //   type: 'wall-line',
+  // })
+
+  // // 그리기가 끝나면, 벽과 치수를 그룹으로 묶는다.
+  // const text = new fabric.Text(Math.round(length) + ' px', {
+  //   fontSize: 16,
+  //   fill: '#e2e2e2',
+  //   originX: 'center',
+  //   originY: 'center',
+  //   angle: -calcAngle(line.x1, line.y1, line.x2, line.y2),
+  //   left: length / 2,
+  //   top: 0,
+  // })
+
+  // const group = new fabric.Group([groupLine, text], {
+  //   left: startPoint.x,
+  //   top: startPoint.y,
+  //   originX: 'left',
+  //   originY: 'center',
+  //   angle: calcAngle(line.x1, line.y1, line.x2, line.y2),
+  //   // 커스텀 데이터
+  //   type: 'wall',
+  //   id: `wall-${Date.now()}`,
+  //   // 레이어
+  //   layer: 'walls',
+  // })
+
+  // canvas.add(group);
+  //saveState(); ?
+}
+
 const handleLogout = () => {
   authStore.logout()
   router.push({
@@ -1130,28 +1296,28 @@ async function loadProject(projectId) {
 /**
  * 새 프로젝트 생성
  */
-async function handleCreateProject() {
-  const { value: title } = await ElMessageBox.prompt(
-    '새 프로젝트의 제목을 입력하세요.',
-    '프로젝트 생성',
-    {
-      confirmButtonText: '생성',
-      cancelButtonText: '취소',
-      inputPattern: /.+/,
-      inputErrorMessage: '제목은 비워둘 수 없습니다.',
-    }
-  );
+// async function handleCreateProject() {
+//   const { value: title } = await ElMessageBox.prompt(
+//     '새 프로젝트의 제목을 입력하세요.',
+//     '프로젝트 생성',
+//     {
+//       confirmButtonText: '생성',
+//       cancelButtonText: '취소',
+//       inputPattern: /.+/,
+//       inputErrorMessage: '제목은 비워둘 수 없습니다.',
+//     }
+//   );
 
-  if (title) {
-    try {
-      const response = await api.createProject({ title });
-      await loadProject(response.data.id);
-      ElMessage.success(`'${title}' 프로젝트가 생성되었습니다.`);
-    } catch (error) {
-      console.error("프로젝트 생성 실패:", error);
-    }
-  }
-}
+//   if (title) {
+//     try {
+//       const response = await api.createProject({ title });
+//       await loadProject(response.data.id);
+//       ElMessage.success(`'${title}' 프로젝트가 생성되었습니다.`);
+//     } catch (error) {
+//       console.error("프로젝트 생성 실패:", error);
+//     }
+//   }
+// }
 
 async function handleExport(format) {
   if (!currentProject.value) {

@@ -52,10 +52,28 @@ export const getProjectById = (projectId) => {
   return apiClient.get(`/projects/${projectId}`)
 }
 
+// @deprecated 2025-10-27
 // 새 프로젝트 생성 (POST /projects)
 export const createProject = (projectData) => {
   // projectData 예시: { title: '새로운 프로젝트' }
   return apiClient.post('/projects', projectData)
+}
+
+/**
+ * 이미지와 함께 새 프로젝트 생성
+ * @author Jangsung
+ * @param {String} title
+ * @param {*} file
+ * @createdAt 2025-10-27
+ */
+export const createProjectWithImage = (title, file) => {
+  const formData = new FormData()
+  formData.append('title', title)
+  formData.append('file', file)
+
+  // FormData를 보낼 때는 Content-Type을 명시하지 않아도,
+  // 브라우저가 자동으로 multipart/form-data와 boundary를 설정해준다.
+  return apiClient.post('/projects', formData)
 }
 
 // 프로젝트 정보 및 평면도 데이터 업데이트 (PUT /projects/{projectId})
