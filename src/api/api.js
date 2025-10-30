@@ -73,7 +73,11 @@ export const createProjectWithImage = (title, file) => {
 
   // FormData를 보낼 때는 Content-Type을 명시하지 않아도,
   // 브라우저가 자동으로 multipart/form-data와 boundary를 설정해준다.
-  return apiClient.post('/projects', formData)
+  return apiClient.post('/projects', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
 }
 
 // 프로젝트 정보 및 평면도 데이터 업데이트 (PUT /projects/{projectId})

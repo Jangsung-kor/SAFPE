@@ -561,44 +561,46 @@ async function loadProjectData(projectData) {
 }
 /**
  * 벽을 그리는 로직
- * @param wallData
+ * @param wallData 예: {start: {x: 169, y: 346}, end: {x: 269, y: 276}}
  * @createAt 2025.10.27
  */
 function createWallObjectOnCanvas(wallData) {
-  // const groupLine = new fabric.Line([0, 0, length, 0], {
-  //   stroke: '#5865f2',
-  //   strokeWidth: 5,
-  //   originX: 'center', // 그룹 내부에서의 원점
-  //   originY: 'center',
-  //   type: 'wall-line',
-  // })
+  const length = Math.sqrt(Math.pow(wallData.end.x - wallData.start.x, 2) + Math.pow(wallData.end.y - wallData.start.y, 2))
 
-  // // 그리기가 끝나면, 벽과 치수를 그룹으로 묶는다.
-  // const text = new fabric.Text(Math.round(length) + ' px', {
-  //   fontSize: 16,
-  //   fill: '#e2e2e2',
-  //   originX: 'center',
-  //   originY: 'center',
-  //   angle: -calcAngle(line.x1, line.y1, line.x2, line.y2),
-  //   left: length / 2,
-  //   top: 0,
-  // })
+  // 선
+  const line = new fabric.Line([0, 0, length, 0], {
+    stroke: '#5865f2',
+    strokeWidth: 5,
+    originX: 'center',  // 원점 위치
+    originY: 'center',  // 원점 위치
+    type: 'wall-line',
+  })
 
-  // const group = new fabric.Group([groupLine, text], {
-  //   left: startPoint.x,
-  //   top: startPoint.y,
-  //   originX: 'left',
-  //   originY: 'center',
-  //   angle: calcAngle(line.x1, line.y1, line.x2, line.y2),
-  //   // 커스텀 데이터
-  //   type: 'wall',
-  //   id: `wall-${Date.now()}`,
-  //   // 레이어
-  //   layer: 'walls',
-  // })
+  // 텍스트
+  const text = new fabric.Text(Math.round(length) + ' px', {
+    fontSize: 16,
+    fill: '#e2e2e2',
+    originX: 'center',
+    originY: 'center',
+    angle: -calcAngle(line.x1, line.y1, line.x2, line.y2),
+    left: length / 2,
+    top: 0,
+  })
 
-  // canvas.add(group);
-  //saveState(); ?
+  // 선 + 텍스트 = 그룹
+  const group = new fabric.Group([line, text], {
+    left: wallData.start.x,
+    top: wallData.start.y,
+    originX: 'left',
+    originY: 'center',
+    angle: calcAngle(line.x1, line.y1, line.x2, line.y2),
+    type: 'wall',
+    id: `wall-${Date.now()}`,
+    layer: 'walls',
+  })
+
+  fabricCanvas.value.add(group)
+  saveState();
 }
 
 const handleLogout = () => {
@@ -857,14 +859,11 @@ function setupCanvasListeners() {
   })
 
   canvas.on('selection:created', (e) => updatePanelFromObject(e.target));
-  //canvas.on('selection:created', updateSelectedInfo);
   canvas.on('selection:updated', (e) => updatePanelFromObject(e.target));
-  //canvas.on('selection:updated', updateSelectedInfo);
   canvas.on('selection:cleared', () => { selectedObjectInfo.value = null; });
 
   // 벽 그리기 로직 (마우스 down, move, up)
   let line, isDown, startPoint;
-  //let isDown, startPoint;
   canvas.on('mouse:down', (o) => {
     if (activeTool.value !== 'wall') return;
     isDown = true;
@@ -1150,34 +1149,6 @@ function deleteSelected() {
   saveState();
 }
 
-function updateSelectedInfo() {
-  const selected = fabricCanvas.value.getActiveObject();
-  if (!selected) {
-    selectedObjectInfo.value = null;
-    return;
-  }
-
-  let info;
-  // 그룹(벽)일 경우와 단일 객체일 경우를 분리
-  if (selected.type === 'wall') {
-    const wallLine = selected.getObjects('wall-line')[0];
-    info = {
-      type: '벽',
-      width: Math.round(wallLine.getScaledWidth()), // 실제 길이
-      angle: Math.round(selected.angle),
-    }
-  } else {
-    info = {
-      type: selected.type === 'door' ? '문' : selected.type === 'window' ? '창문' : '객체',
-      width: Math.round(selected.getScaledWidth()),
-      height: Math.round(selected.getScaledHeight()),
-      angle: Math.round(selected.angle),
-    };
-  }
-
-  selectedObjectInfo.value = info;
-}
-
 // 스케일 설정 로직
 async function setScale() {
   if (!realLengthInput.value || realLengthInput.value <= 0) {
@@ -1269,55 +1240,6 @@ async function handleSaveProject(scaleData = null) {
     console.error("프로젝트 저장 실패:", error);
   }
 }
-
-async function loadProject(projectId) {
-  try {
-    const response = await api.getProjectById(projectId);
-    currentProject.value = response.data;
-
-    // 데이터 초기화
-    const planData = currentProject.value.planData || [];
-    walls.value = planData.walls || [];
-    doors.value = planData.doors || [];
-    windows.value = planData.windows || [];
-
-    backgroundImage.value = currentProject.value.backgroundImageUrl
-      ? `http://localhost:8080${currentProject.value.backgroundImageUrl}` // 전체 URL로 만들어줌
-      : null;
-
-    // 캔버스 초기화 및 다시 그리기
-    await nextTick(); // DOM 업데이트를 기다립
-  } catch (error) {
-    console.log("프로젝트 로딩 실패:", error);
-    // 에러 메세지는 언터셉처가 처리
-  }
-}
-
-/**
- * 새 프로젝트 생성
- */
-// async function handleCreateProject() {
-//   const { value: title } = await ElMessageBox.prompt(
-//     '새 프로젝트의 제목을 입력하세요.',
-//     '프로젝트 생성',
-//     {
-//       confirmButtonText: '생성',
-//       cancelButtonText: '취소',
-//       inputPattern: /.+/,
-//       inputErrorMessage: '제목은 비워둘 수 없습니다.',
-//     }
-//   );
-
-//   if (title) {
-//     try {
-//       const response = await api.createProject({ title });
-//       await loadProject(response.data.id);
-//       ElMessage.success(`'${title}' 프로젝트가 생성되었습니다.`);
-//     } catch (error) {
-//       console.error("프로젝트 생성 실패:", error);
-//     }
-//   }
-// }
 
 async function handleExport(format) {
   if (!currentProject.value) {
